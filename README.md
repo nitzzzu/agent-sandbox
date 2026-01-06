@@ -30,10 +30,10 @@ I found [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent
 
 So, We decide created this **Agent-Sandbox** project, which provides a RESTful API and MCP(Model Context Protocol) server to manage the sandbox lifecycle easily. It abstracts the complexity of Kubernetes and provides a simple interface for AI Agents and users to create, access, and delete sandboxes as needed. And we refer to some design ideas from [Blaxel Sandbox](https://docs.blaxel.ai/Sandboxes/Overview) and [E2B](https://e2b.dev/) provide similar features like lifecycle management and API design. Making it more suitable for AI Agents to use, but is opensource and self-hosted.
 
-## Full sandbox lifecycle demo by Agent-Sandbox MCP Server
+## Full sandbox lifecycle manage by Agent-Sandbox MCP Server
 ![full-lifecycle-demo.png](docs/full-lifecycle-demo.png)
 
-**Architecture**
+## Architecture
 ```mermaid
 flowchart TD
     A1([Agent A]):::agent -->|Execute Code| ASB
