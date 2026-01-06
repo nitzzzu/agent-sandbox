@@ -35,7 +35,7 @@ So, We decide created this **Agent-Sandbox** project, which provides a RESTful A
 flowchart TD
     A1([Agent A]):::agent -->|Execute Code| ASB
     A2([Agent B]):::agent -->|Browse Web| ASB
-    A3([Agent C]):::agent -->|Terminal Access| ASB(Agent-Sandbox <br/> Sandbox Controller)
+    A3([Agent C]):::agent -->|Terminal Access| ASB(Agent-Sandbox <br/> Auto CRUD Sandboxes)
     A4([Agent ...]):::agent -->|...| ASB
     
     ASB -->SB1{{Code Sandbox}}
@@ -43,10 +43,10 @@ flowchart TD
     ASB -->SB3{{Computer Sandbox}}
     ASB -->SB4{{Customized Sandbox}}
     
-    SB1 -->|File R/W| V
-    SB2 -->|State Persistence| V
-    SB3 -->|Shared Storage| V
-    SB4 --> V[Unified Storage <br/> NAS / OSS / S3]
+    SB1 <-->|File R/W| V
+    SB2 <-->|State Persistence| V
+    SB3 <-->|Shared Storage| V
+    SB4 <--> V[Unified Storage <br/> NAS / OSS / S3]
     
     V --- K[Kubernetes Cluster]
     
