@@ -1,17 +1,17 @@
 ARG SANDBOX_VERSION=latest
 FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
-# Use an official Python runtime as a parent image
-FROM python:3.12-slim
+FROM node:23-alpine
 
-RUN apt-get update && apt-get install -y git \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk update && apk add --no-cache \
+  git \
+  && rm -rf /var/cache/apk/*
 
 WORKDIR /blaxel
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
-EXPOSE 8080 8000
+EXPOSE 8080 3000
 
 ENV HOME=/blaxel
 
