@@ -17,124 +17,124 @@
 package sandbox
 
 import (
-    "fmt"
-    "os"
-    "time"
+	"fmt"
+	"os"
+	"time"
 
-    "github.com/agent-sandbox/agent-sandbox/pkg/config"
+	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 )
 
 var SandboxDeployTemplate string
 
 func init() {
-    SandboxDeployTemplate = defaultSandboxTemplate
-    if config.Cfg.SandboxTemplateFile != "" {
-        var err error
-        var val []byte
-        if val, err = os.ReadFile(config.Cfg.SandboxTemplateFile); err != nil {
-            panic(err)
-        }
-        SandboxDeployTemplate = string(val)
-    }
+	SandboxDeployTemplate = defaultSandboxTemplate
+	if config.Cfg.SandboxTemplateFile != "" {
+		var err error
+		var val []byte
+		if val, err = os.ReadFile(config.Cfg.SandboxTemplateFile); err != nil {
+			panic(err)
+		}
+		SandboxDeployTemplate = string(val)
+	}
 }
 
 type SandboxBase struct {
 
-    // Optionally give the sandbox a name. Unique within an app.
-    Name string `json:"name,omitempty" required:"false" jsonschema:"The unique name of Sandbox."`
+	// Optionally give the sandbox a name. Unique within an app.
+	Name string `json:"name,omitempty" required:"false" jsonschema:"The unique name of Sandbox."`
 
-    // The type to run as the container for the sandbox when Image is not set. e.g. aio/python/shell/
-    Environment string `json:"environment,omitempty" jsonschema:"The sandbox Environment name."`
+	// The type to run as the container for the sandbox when Image is not set. e.g. aio/python/shell/
+	Environment string `json:"environment,omitempty" jsonschema:"The sandbox Environment name."`
 }
 
 type Sandbox struct {
-    SandboxBase
+	SandboxBase
 
-    // Set the CMD of the SandboxHandler, overriding any CMD of the container image.
-    Args []string `json:"args,omitempty"`
+	// Set the CMD of the SandboxHandler, overriding any CMD of the container image.
+	Args []string `json:"args,omitempty"`
 
-    // Associate the sandbox with an app. Required unless creating from a container.
-    App string `json:"app,omitempty" jsonschema:"App to for associate the sandbox with an app"`
+	// Associate the sandbox with an app. Required unless creating from a container.
+	App string `json:"app,omitempty" jsonschema:"App to for associate the sandbox with an app"`
 
-    // The image to run as the container for the sandbox.
-    Image string `json:"image,omitempty"`
+	// The image to run as the container for the sandbox.
+	Image string `json:"image,omitempty"`
 
-    // Environment variables to set in the SandboxHandler.
-    Env map[string]*string `json:"env,omitempty"`
+	// Environment variables to set in the SandboxHandler.
+	Env map[string]*string `json:"env,omitempty"`
 
-    // Maximum lifetime of the sandbox in minutes. timeout is reached apply to delete action
-    Timeout int `json:"timeout,omitempty" default:"300"` // default 60m
+	// Maximum lifetime of the sandbox in minutes. timeout is reached apply to delete action
+	Timeout int `json:"timeout,omitempty" default:"300"` // default 60m
 
-    // The amount of time in minutes that a sandbox can be idle before being terminated.
-    IdleTimeout int `json:"idle_timeout,omitempty"` // default 10m
+	// The amount of time in minutes that a sandbox can be idle before being terminated.
+	IdleTimeout int `json:"idle_timeout,omitempty"` // default 10m
 
-    // Policy to apply when the idle is reached. Options are 'delete' or 'scaledown'.
-    IdlePolicy string `json:"idle_policy,omitempty" default:"delete"` // default delete
+	// Policy to apply when the idle is reached. Options are 'delete' or 'scaledown'.
+	IdlePolicy string `json:"idle_policy,omitempty" default:"delete"` // default delete
 
-    // Working directory of the sandbox.
-    Workdir string `json:"workdir,omitempty"`
+	// Working directory of the sandbox.
+	Workdir string `json:"workdir,omitempty"`
 
-    // CPU request
-    CPU string `json:"cpu,omitempty"  default:"100m"`
+	// CPU request
+	CPU string `json:"cpu,omitempty"  default:"100m"`
 
-    // Memory request
-    Memory string `json:"memory,omitempty"  default:"128Mi"`
+	// Memory request
+	Memory string `json:"memory,omitempty"  default:"128Mi"`
 
-    // CPU limit
-    CPULimit string `json:"cpu_limit,omitempty"  default:"1000m"`
+	// CPU limit
+	CPULimit string `json:"cpu_limit,omitempty"  default:"1000m"`
 
-    // Memory limit
-    MemoryLimit string `json:"memory_limit,omitempty"  default:"1024Mi"`
+	// Memory limit
+	MemoryLimit string `json:"memory_limit,omitempty"  default:"1024Mi"`
 
-    // HTTP/2 encrypted ports
-    Ports []int `json:"ports,omitempty"`
+	// HTTP/2 encrypted ports
+	Ports []int `json:"ports,omitempty"`
 
-    // Status of the sandbox. Options are 'creating', 'running', 'idle', 'deleting', 'error'.
-    Status string `json:"status,omitempty"`
+	// Status of the sandbox. Options are 'creating', 'running', 'idle', 'deleting', 'error'.
+	Status string `json:"status,omitempty"`
 }
 
 var DefaultSandbox = &Sandbox{
-    CPU:         "100m",
-    Memory:      "128Mi",
-    CPULimit:    "1000m",
-    MemoryLimit: "1024Mi",
-    Timeout:     60,
-    IdleTimeout: 10,
+	CPU:         "100m",
+	Memory:      "128Mi",
+	CPULimit:    "1000m",
+	MemoryLimit: "1024Mi",
+	Timeout:     60,
+	IdleTimeout: 10,
 }
 
 func (o *Sandbox) Make() {
-    // one day max
-    if o.Timeout >= 1440 {
-        o.Timeout = 1440
-    }
-    // one hour max
-    if o.IdleTimeout > 60 {
-        o.IdleTimeout = 60
-    }
+	// one day max
+	if o.Timeout >= 1440 {
+		o.Timeout = 1440
+	}
+	// one hour max
+	if o.IdleTimeout > 60 {
+		o.IdleTimeout = 60
+	}
 
-    if o.Environment == "" && o.Image == "" {
-        o.Image = config.Cfg.SandboxDefaultImage
-        o.Environment = config.Cfg.SandboxDefaultEnvironment
-    }
+	if o.Environment == "" && o.Image == "" {
+		o.Image = config.Cfg.SandboxDefaultImage
+		o.Environment = config.Cfg.SandboxDefaultEnvironment
+	}
 
-    if o.Environment != "" && o.Image == "" {
-        o.Image = config.GetEnvironmentByName(o.Environment).Image
-    }
+	if o.Environment != "" && o.Image == "" {
+		o.Image = config.GetEnvironmentByName(o.Environment).Image
+	}
 
-    if o.Environment == "" && o.Image != "" {
-        o.Environment = "custom"
-    }
+	if o.Environment == "" && o.Image != "" {
+		o.Environment = "custom"
+	}
 
-    if o.Name == "" {
-        o.Name = fmt.Sprintf("sandbox-%s-%d", o.Environment, time.Now().Unix())
-    }
+	if o.Name == "" {
+		o.Name = fmt.Sprintf("sandbox-%s-%d", o.Environment, time.Now().Unix())
+	}
 
 }
 
 type SandboxKube struct {
-    Sandbox   *Sandbox
-    RawData   string
-    Namespace string
+	Sandbox   *Sandbox
+	RawData   string
+	Namespace string
 }
 
 const defaultSandboxTemplate = `apiVersion: apps/v1
@@ -175,4 +175,11 @@ spec:
           limits:
             cpu: {{.Sandbox.CPULimit}}
             memory: {{.Sandbox.MemoryLimit}}
+		readinessProbe:
+          failureThreshold: 5
+          tcpSocket:
+          port: 8080
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 3
 `

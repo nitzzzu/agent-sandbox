@@ -43,3 +43,10 @@ spec:
             limits:
               cpu: {{.Sandbox.CPULimit}}
               memory: {{.Sandbox.MemoryLimit}}
+          readinessProbe:
+            failureThreshold: 5
+            tcpSocket:
+              port: 8080
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 3
