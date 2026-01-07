@@ -1,7 +1,6 @@
 <div align="center">
   <picture >
-  <source srcset="./docs/agent-sandbox.png" type="image/png">
-  <img alt="agent-sandbox" src="./docs/agent-sandbox.png" width="260px">
+  <img alt="agent-sandbox" src="./docs/agentsandbox.png" width="240px" height="260px">
   </picture>
 
   <p align="center"><b> Agent-Sandbox is an open-sourced <a href="https://docs.blaxel.ai/Sandboxes/Overview">Blaxel Sandbox</a> or <a href="https://e2b.dev/">E2B</a> like solution! </b></p>
@@ -67,7 +66,9 @@ flowchart TD
 # Quick Start
 
 ## 1, Installation
-You can install Agent-Sandbox by applying the provided [install.yaml](https://github.com/agent-sandbox/agent-sandbox/blob/main/install.yaml) file to your Kubernetes cluster. requires Kubernetes version 1.24 or higher.
+You can install Agent-Sandbox by applying the provided [install.yaml](https://github.com/agent-sandbox/agent-sandbox/blob/main/install.yaml) file to your Kubernetes cluster.  
+
+requires **Kubernetes version 1.26** or higher.
 ```
 kubectl create namespace agent-sandbox
 kubectl apply -nagent-sandbox -f install.yaml
