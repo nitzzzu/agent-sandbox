@@ -1,9 +1,11 @@
 <div align="center">
   <picture >
-  <img alt="agent-sandbox" src="./docs/agentsandbox.png" width="240px" height="260px">
+  <img alt="agent-sandbox" src="./docs/agentsandbox.png" width="240px" height="280px">
   </picture>
 
-  <p align="center"><b> Agent-Sandbox is an open-sourced <a href="https://docs.blaxel.ai/Sandboxes/Overview">Blaxel Sandbox</a> or <a href="https://e2b.dev/">E2B</a> like solution! </b></p>
+  <p align="center"><b> Agent-Sandbox is an open-sourced <a href="https://docs.blaxel.ai/Sandboxes/Overview">Blaxel Sandbox</a> or <a href="https://e2b.dev/">E2B</a> like solution! </b>
+</p>
+<br/>
   <p align="center">Agent-Sandbox is an enterprise-grade ai-first, cloud-native, high-performance runtime environment designed for AI Agents. It combines the Kubernetes
 with container isolation. Allows Agents to securely run untrusted LLM-generated Code, Browser use, Computer use, and
 Shell commands etc. with stateful, long-running, multi-session and multi-tenant.</p>
