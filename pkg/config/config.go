@@ -43,7 +43,7 @@ type Config struct {
 
     SandboxTemplateFile string `split_words:"true" default:"" required:"false"`
 
-    SandboxEnvironmentConfigFile string `split_words:"true" default:"default-environments.json" required:"false"`
+    SandboxEnvironmentConfigFile string `split_words:"true" default:"environments.json" required:"false"`
     SandboxDefaultImage          string `split_words:"true" default:"ghcr.io/agent-infra/sandbox:latest" required:"false"`
     SandboxDefaultEnvironment    string `split_words:"true" default:"aio" required:"false"`
 }
