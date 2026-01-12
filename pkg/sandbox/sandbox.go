@@ -40,11 +40,11 @@ func init() {
 
 type SandboxBase struct {
 
-	// Optionally give the sandbox a name. Unique within an app.
+	// Optionally give the sandbox a name.
 	Name string `json:"name,omitempty" required:"false" jsonschema:"The unique name of Sandbox."`
 
 	// The type to run as the container for the sandbox when Image is not set. e.g. aio/python/shell/
-	Environment string `json:"environment,omitempty" jsonschema:"The sandbox Environment name."`
+	Environment string `json:"environment,omitempty" required:"false" jsonschema:"The sandbox Environment name."`
 }
 
 type Sandbox struct {

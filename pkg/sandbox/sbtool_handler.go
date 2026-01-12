@@ -32,7 +32,7 @@ type SandboxTool struct {
 
     ToolName string `json:"tool_name,omitempty" required:"true" jsonschema:"The name of the Tool to execute inside the Sandbox"`
 
-    Arguments interface{} `json:"arguments,omitempty" jsonschema:"The arguments of the Tool to execute inside the Sandbox"`
+    Arguments map[string]interface{} `json:"arguments,omitempty" jsonschema:"The arguments of the Tool to execute inside the Sandbox"`
 }
 
 func (a *Handler) executorHandler(ctx context.Context, req *mcp.CallToolRequest, tool *SandboxTool) (*mcp.CallToolResult, any, error) {
@@ -46,6 +46,7 @@ func (a *Handler) executorHandler(ctx context.Context, req *mcp.CallToolRequest,
 
     session, err := a.acquireClientSession(ctx, tool.SandboxName)
     if err != nil {
+        klog.Errorf("acquireClientSession failed: %v", err)
         return nil, nil, fmt.Errorf("failed to acquire client session for sandbox %s: %v", tool.SandboxName, err)
     }
 

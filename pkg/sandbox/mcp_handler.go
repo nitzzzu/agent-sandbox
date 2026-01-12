@@ -30,7 +30,8 @@ import (
 
 func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "agent-sandbox-mcp-server",
+		Name: "agent-sandbox-mcp-server",
+
 		Version: "1.0.0",
 	}, nil)
 
@@ -46,25 +47,44 @@ func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 			"environment": {Type: "string", Description: "The environment to use for the Sandbox. Must be one of the predefined environments. Available environments:\n" + environmentsDesc},
 		},
 	}
+	inputSchemaName := &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"name": {Type: "string", Description: "The name of the Sandbox"},
+		},
+	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "createSandbox",
-		Description: "Create a new Sandbox for execution python or javascript code, browser use, etc. Return Tools schema of Sandbox  for further use by call sandboxExecutor Tool.",
+		Description: "Create a new Sandbox for execution python or javascript code, browser use, etc. Return Tools schema of Sandbox  for further use by call sandboxExecutor.",
 		InputSchema: inputSchema,
 	}, a.CreateSandboxTool)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "getSandbox",
-		Description: "Get the details of a Sandbox by name",
+		Description: "Get the details of a Sandbox by name, include the Tools schema for further use by call sandboxExecutor.",
+		InputSchema: inputSchemaName,
 	}, a.GetSandboxTool)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "listSandbox",
+		Description: "List all existing Sandboxes. return name and basic info of each Sandbox, you can use getSandbox Tool to get more details and Tools schema of each Sandbox.",
+		InputSchema: &jsonschema.Schema{
+			Type: "object",
+			Properties: map[string]*jsonschema.Schema{
+				"environment": {Type: "string", Description: "The environment of the Sandboxes, optional filter by environment."},
+			},
+		},
+	}, a.ListSandboxTool)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "deleteSandbox",
 		Description: "Delete a Sandbox by name. Best practice to delete the Sandbox after all tasks are done to free resources.",
+		InputSchema: inputSchemaName,
 	}, a.DelSandboxTool)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "sandboxExecutor",
-		Description: "Execute commands or actions inside the Sandbox",
+		Description: "Execute a Tool inside the specified Sandbox.",
 	}, a.executorHandler)
 
 	// Create the streamable HTTP handler.
@@ -79,16 +99,16 @@ func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 }
 
 func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
-	klog.V(2).Infof("Create sandbox opts %v", sandbox)
+	sb := DefaultSandbox
+	sb.SandboxBase = *sandbox
 
-	exist := a.controller.Get(sandbox.Name)
+	klog.V(2).Infof("Create sandbox opts %v", sb)
+
+	exist := a.controller.Get(sb.Name)
 	if exist != nil {
-		return nil, nil, fmt.Errorf("sandbox %s already exists", sandbox.Name)
+		return nil, nil, fmt.Errorf("sandbox %s already exists", sb.Name)
 	}
-	sb := &Sandbox{
-		SandboxBase: *sandbox,
-	}
-	sb.Make()
+
 	err := a.controller.Create(sb)
 
 	if err != nil {
@@ -96,7 +116,7 @@ func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolReques
 		return nil, nil, fmt.Errorf("failed to create new sandbox, error: %v", err)
 	}
 
-	stools, err := a.sandboxTools(ctx, sandbox.Name)
+	stools, err := a.sandboxTools(ctx, sb.Name)
 	if err != nil {
 		stools = fmt.Sprintf("failed to get Sandbox tools error: %s, please retry to get Sandbox Tools by call getSandbox Tool", err.Error())
 	}
@@ -104,7 +124,25 @@ func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolReques
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: fmt.Sprintf("Sandbox created, Sandbox name:%s, %s", sandbox.Name, stools)},
+			&mcp.TextContent{Text: fmt.Sprintf("Sandbox created, Sandbox name:%s, %s", sb.Name, stools)},
+		},
+	}, nil, nil
+}
+
+func (a *Handler) ListSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
+	sbs := a.controller.List()
+	if sbs == nil || len(sbs) == 0 {
+		return nil, nil, fmt.Errorf("no sandboxes found")
+	}
+
+	sbsJson, err := json.MarshalIndent(sbs, "", "  ")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal sandboxes: %v", err)
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Existing Sandboxes:\n%s", string(sbsJson))},
 		},
 	}, nil, nil
 }
