@@ -93,7 +93,7 @@ spec:
             name: agent-sandbox
             port:
               number: 80
-        path: /(.*)
+        path: /
 ```
 Now you can access the Agent-Sandbox API server at `http://agent-sandbox.your-host.com`.
 
@@ -135,7 +135,7 @@ This MCP integration enables agents to manage sandbox resources without manual i
 You can also manage sandboxes manually using the RESTful API provided by Agent-Sandbox.
 
 #### I, Create a Sandbox
-You can create a new sandbox by sending a POST request to the `/api/v1/sandbox` endpoint with the desired configuration. For example, to create an `aio` environment sandbox and name it `sandbox-01`, you can use the following curl command or programmatically call the API:
+You can create a new sandbox by sending a POST request to the `/api/v1/sandbox` endpoint with the desired configuration. For example, to create an `aio` sandbox and name it `sandbox-01`, you can use the following curl command or programmatically call the API:
 
 <table>
 <tr>
@@ -188,7 +188,7 @@ print(response.text)
 ```
 
 #### II, Access to Sandbox
-`/sandbox/{sandbox_name}` endpoint to get the access of the sandbox, including the connection details such as URL, WebSocket URL, VNC URL, or other relevant information based on the sandbox environment type.
+`/sandbox/{sandbox_name}` endpoint to get the access of the sandbox, including the connection details such as URL, WebSocket URL, VNC URL, or other relevant information based on the sandbox template.
 
 Now you can access to the previously created **sandbox-01** sandbox using `/sandbox/sandbox-01`.
 
