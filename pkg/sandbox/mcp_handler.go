@@ -39,12 +39,12 @@ func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 	server.AddReceivingMiddleware(createLoggingMiddleware())
 
 	// Add the tools.
-	environmentsDesc := config.GetEnvironmentsForMCPTools()
+	templatesDesc := config.GetTemplatesForMCPTools()
 	inputSchema := &jsonschema.Schema{
 		Type: "object",
 		Properties: map[string]*jsonschema.Schema{
-			"name":        {Type: "string", Description: "The name of the Sandbox to create. You can leave it empty to auto generate or specify it yourself with contextual meaning. only contain lowercase letters numbers and '-', max length 50, add timestamp suffix to avoid name conflict, e.g. 'sandbox-execute-code-1766483780."},
-			"environment": {Type: "string", Description: "The environment to use for the Sandbox. Must be one of the predefined environments. Available environments:\n" + environmentsDesc},
+			"name":     {Type: "string", Description: "The name of the Sandbox to create. You can leave it empty to auto generate or specify it yourself with contextual meaning. only contain lowercase letters numbers and '-', max length 50, add timestamp suffix to avoid name conflict, e.g. 'sandbox-execute-code-1766483780."},
+			"template": {Type: "string", Description: "The template name to use for creating the Sandbox. Must be one of the predefined templates. Available Templates:\n" + templatesDesc},
 		},
 	}
 	inputSchemaName := &jsonschema.Schema{
@@ -71,7 +71,7 @@ func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
-				"environment": {Type: "string", Description: "The environment of the Sandboxes, optional filter by environment."},
+				"template": {Type: "string", Description: "The template of the Sandboxes, optional filter by template name."},
 			},
 		},
 	}, a.ListSandboxTool)
@@ -99,17 +99,18 @@ func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 }
 
 func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
-	sb := DefaultSandbox
+	sb := GetDefaultSandbox("default-mcp-user") // TODO get user from auth
+
 	sb.SandboxBase = *sandbox
 
 	klog.V(2).Infof("Create sandbox opts %v", sb)
 
-	exist := a.controller.Get(sb.Name)
+	exist, _ := a.controller.Get(sb.Name)
 	if exist != nil {
 		return nil, nil, fmt.Errorf("sandbox %s already exists", sb.Name)
 	}
 
-	err := a.controller.Create(sb)
+	sbCreated, err := a.controller.Create(sb)
 
 	if err != nil {
 		klog.Errorf("Failed to create sandbox, err: %v", err)
@@ -124,15 +125,16 @@ func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolReques
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: fmt.Sprintf("Sandbox created, Sandbox name:%s, %s", sb.Name, stools)},
+			&mcp.TextContent{Text: fmt.Sprintf("Sandbox created, Sandbox name:%s, status:%s, %s", sbCreated.Name, sbCreated.Status, stools)},
 		},
 	}, nil, nil
 }
 
 func (a *Handler) ListSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
-	sbs := a.controller.List()
-	if sbs == nil || len(sbs) == 0 {
-		return nil, nil, fmt.Errorf("no sandboxes found")
+	user := "default-mcp-user" // TODO get user from auth
+	sbs, err := a.controller.List(user)
+	if sbs != nil {
+		return nil, nil, fmt.Errorf("no sandboxes found %v", err)
 	}
 
 	sbsJson, err := json.MarshalIndent(sbs, "", "  ")
@@ -154,7 +156,7 @@ func (a *Handler) GetSandboxTool(ctx context.Context, req *mcp.CallToolRequest, 
 
 	klog.V(2).Infof("Get sandbox tool by name=%s", sandbox.Name)
 
-	sb := a.controller.Get(sandbox.Name)
+	sb, _ := a.controller.Get(sandbox.Name)
 	if sb == nil {
 		return nil, nil, fmt.Errorf("sandbox %s not found", sandbox.Name)
 	}

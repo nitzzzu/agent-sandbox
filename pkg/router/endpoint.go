@@ -17,45 +17,45 @@
 package router
 
 import (
-    "context"
-    "fmt"
-    "math/rand"
-    "net/url"
-    "time"
+	"context"
+	"fmt"
+	"math/rand"
+	"net/url"
+	"time"
 
-    v1 "k8s.io/api/core/v1"
-    "k8s.io/apimachinery/pkg/labels"
-    "k8s.io/apimachinery/pkg/util/wait"
-    podclient "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
+	podclient "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
 )
 
-func AcquireDest(rootCtx context.Context, name string) (*url.URL, error) {
-    selector, _ := labels.Parse(fmt.Sprintf("sandbox=" + name))
+func AcquireDest(rootCtx context.Context, name string, port string) (*url.URL, error) {
+	selector, _ := labels.Parse(fmt.Sprintf("sandbox=" + name))
 
-    var pods []*v1.Pod
-    var err error
+	var pods []*v1.Pod
+	var err error
 
-    // Wait for pods to be ready avoid faster than rs creation and caching issue
-    if perr := wait.PollUntilContextTimeout(context.TODO(), 300*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-        pods, err = podclient.Get(rootCtx).Lister().List(selector)
-        if err != nil {
-            return false, err
-        }
-        if len(pods) == 0 {
-            return false, nil
-        }
-        return true, nil
-    }); perr != nil {
-        return nil, fmt.Errorf("timeout waiting for get pods for sandbox %v error: %v", name, perr)
-    }
+	// Wait for pods to be ready avoid faster than rs creation and caching issue
+	if perr := wait.PollUntilContextTimeout(context.TODO(), 300*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		pods, err = podclient.Get(rootCtx).Lister().List(selector)
+		if err != nil {
+			return false, err
+		}
+		if len(pods) == 0 {
+			return false, nil
+		}
+		return true, nil
+	}); perr != nil {
+		return nil, fmt.Errorf("timeout waiting for get pods for sandbox %v error: %v", name, perr)
+	}
 
-    pod := pods[rand.Intn(len(pods))]
-    ip := pod.Status.PodIP
-    if ip == "" {
-        return nil, fmt.Errorf("sandbox pod IP not found")
-    }
+	pod := pods[rand.Intn(len(pods))]
+	ip := pod.Status.PodIP
+	if ip == "" {
+		return nil, fmt.Errorf("sandbox pod IP not found")
+	}
 
-    targetURL, _ := url.Parse(fmt.Sprintf("http://%s:%s", ip, "8080"))
+	targetURL, _ := url.Parse(fmt.Sprintf("http://%s:%s", ip, port))
 
-    return targetURL, nil
+	return targetURL, nil
 }

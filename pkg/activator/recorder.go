@@ -23,7 +23,7 @@ import (
     "k8s.io/client-go/tools/record"
 )
 
-func getRecorder(ctx context.Context) record.EventRecorder {
+func GetRecorder(ctx context.Context) record.EventRecorder {
     r := client.CreateRecorderEventImpl(ctx, ComponentName)
     return r
 }

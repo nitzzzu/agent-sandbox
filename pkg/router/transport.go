@@ -17,26 +17,26 @@
 package router
 
 import (
-    "net"
-    "net/http"
-    "time"
+	"net"
+	"net/http"
+	"time"
 )
 
 func getTransport() *http.Transport {
-    transport := &http.Transport{
-        DialContext: (&net.Dialer{
-            Timeout:   5 * time.Second,
-            KeepAlive: 30 * time.Second,
-        }).DialContext,
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
 
-        TLSHandshakeTimeout: 5 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
 
-        ResponseHeaderTimeout: 300 * time.Second,
+		ResponseHeaderTimeout: 300 * time.Second,
 
-        MaxIdleConns:        100,
-        MaxIdleConnsPerHost: 20,
-        IdleConnTimeout:     90 * time.Second,
-    }
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+	}
 
-    return transport
+	return transport
 }

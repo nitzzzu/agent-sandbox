@@ -17,65 +17,95 @@
 package router
 
 import (
-    "context"
-    "fmt"
-    "net/http"
-    "net/http/httputil"
-    "strings"
-    "time"
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httputil"
+	"strings"
+	"time"
 
-    "github.com/agent-sandbox/agent-sandbox/pkg/activator"
-    "k8s.io/client-go/kubernetes"
-    kubeclient "knative.dev/pkg/client/injection/kube/client"
+	"github.com/agent-sandbox/agent-sandbox/pkg/activator"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
 )
 
 type SandboxRouter struct {
-    SharedTransport http.RoundTripper
-    client          kubernetes.Interface
-    rootCtx         context.Context
-    activator       *activator.Activator
+	SharedTransport http.RoundTripper
+	client          kubernetes.Interface
+	rootCtx         context.Context
+	activator       *activator.Activator
 }
 
 func NewSandboxRouter(ctx context.Context, a *activator.Activator) *SandboxRouter {
-    transport := getTransport()
+	transport := getTransport()
 
-    sr := &SandboxRouter{
-        SharedTransport: transport,
-        rootCtx:         ctx,
-        activator:       a,
-    }
-    sr.client = kubeclient.Get(ctx)
+	sr := &SandboxRouter{
+		SharedTransport: transport,
+		rootCtx:         ctx,
+		activator:       a,
+	}
+	sr.client = kubeclient.Get(ctx)
 
-    return sr
+	return sr
 }
 
 func (s *SandboxRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    name := r.PathValue("name")
-    fmt.Printf("DynamicProxyRouter ServeHTTP name=%s\n", name)
-    s.activator.RecordLastEvent(activator.EventTypeLastRequest, name)
+	name := r.PathValue("name")
+	port := r.URL.Query().Get("port")
 
-    prefixToStrip := "/sandbox/" + name
+	if name == "" {
+		http.Error(w, "missing sandbox name in url", http.StatusBadRequest)
+		klog.Error("Missing sandbox name in url: ", r.RequestURI)
+		return
+	}
 
-    targetURL, err := AcquireDest(s.rootCtx, name)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("failed to acquire destination ip for sandbox %s: %v", name, err), http.StatusBadGateway)
-        return
-    }
+	if port == "" {
+		port = "8080"
+	}
 
-    proxy := httputil.NewSingleHostReverseProxy(targetURL)
-    proxy.Transport = s.SharedTransport
+	prefixToStrip := fmt.Sprintf("/sandbox/%s", name)
 
-    proxy.Director = func(req *http.Request) {
-        req.URL.Scheme = targetURL.Scheme
-        req.URL.Host = targetURL.Host
-        req.Host = targetURL.Host
+	klog.Info("proxy router ", name, " port=", port, " prefixToStrip=", prefixToStrip)
 
-        req.URL.Path = strings.TrimPrefix(req.URL.Path, prefixToStrip)
-        req.Header.Set("X-Request-ID", fmt.Sprintf("%d", time.Now().UnixNano()))
-    }
+	//remove port query param from request url
+	q := r.URL.Query()
+	q.Del("port")
+	r.URL.RawQuery = q.Encode()
 
-    proxy.ServeHTTP(w, r)
-    s.activator.RecordLastEvent(activator.EventTypeLastResponse, name)
-    fmt.Printf("DynamicProxyRouter ServeHTTP done name=%s\n", name)
-    return
+	s.activator.RecordLastEvent(activator.EventTypeLastRequest, name)
+
+	targetURL, err := AcquireDest(s.rootCtx, name, port)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to acquire destination ip for sandbox %s: %v, possible instance is not ready yet, please retry later or checking pod status!", name, err), http.StatusBadGateway)
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.Transport = s.SharedTransport
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		klog.V(2).Infof("routed sandbox request, url %s %s, response status %v", resp.Request.Method, resp.Request.URL, resp.StatusCode)
+		return nil
+	}
+
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = targetURL.Scheme
+		req.URL.Host = targetURL.Host
+		req.Host = targetURL.Host
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, prefixToStrip)
+
+		klog.Info("Proxying request to sandbox ", "name=", name, " url=", req.Method, req.URL)
+		req.Header.Set("X-Request-ID", fmt.Sprintf("%d", time.Now().UnixNano()))
+	}
+
+	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+		klog.Error("Proxy error for sandbox ", name, " error=", err)
+		http.Error(rw, "upstream return error "+err.Error(), http.StatusBadRequest)
+	}
+
+	rw := NewResponseWare(w, http.StatusOK)
+	proxy.ServeHTTP(rw, r)
+	s.activator.RecordLastEvent(activator.EventTypeLastResponse, name)
+	klog.Info("route request to sandbox ", name, " completed")
+	return
 }

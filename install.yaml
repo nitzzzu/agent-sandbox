@@ -80,7 +80,7 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.namespace
-          image: ghcr.io/agent-sandbox/agent-sandbox:0.1.1
+          image: ghcr.io/agent-sandbox/agent-sandbox:0.2.0
           imagePullPolicy: IfNotPresent
           livenessProbe:
             failureThreshold: 5

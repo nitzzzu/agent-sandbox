@@ -17,104 +17,108 @@
 package sandbox
 
 import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "net/http"
-    "sync"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
 
-    "github.com/agent-sandbox/agent-sandbox/pkg/activator"
-    "k8s.io/klog/v2"
+	"github.com/agent-sandbox/agent-sandbox/pkg/activator"
+	"k8s.io/klog/v2"
 )
 
 type ClientSessionCache struct {
-    // TODO session cleanup?
-    sessions sync.Map
+	// TODO session cleanup?
+	sessions sync.Map
 }
 
 type Handler struct {
-    rootCtx      context.Context
-    controller   *Controller
-    sessionCache *ClientSessionCache
-    activator    *activator.Activator
+	rootCtx      context.Context
+	controller   *Controller
+	sessionCache *ClientSessionCache
+	activator    *activator.Activator
 }
 
-func NewHandler(rootCtx context.Context, a *activator.Activator) *Handler {
-    c := NewController(rootCtx)
-    cache := &ClientSessionCache{
-        //sessions: make(map[string]*mcp.ClientSession),
-    }
+func NewHandler(rootCtx context.Context, c *Controller, a *activator.Activator) *Handler {
+	cache := &ClientSessionCache{
+		//sessions: make(map[string]*mcp.ClientSession),
+	}
 
-    return &Handler{
-        rootCtx:      rootCtx,
-        controller:   c,
-        activator:    a,
-        sessionCache: cache,
-    }
+	return &Handler{
+		rootCtx:      rootCtx,
+		controller:   c,
+		activator:    a,
+		sessionCache: cache,
+	}
 }
 
 func (a *Handler) CreateSandbox(r *http.Request) (interface{}, error) {
-    var sb = DefaultSandbox
-    err := json.NewDecoder(r.Body).Decode(sb)
-    if err != nil {
-        return "", fmt.Errorf("failed to decode request body: %v", err)
-    }
-    //sb.Build()
+	user := "default-user" // TODO get user from auth
 
-    klog.V(2).Infof("Create sandbox opts %v", sb)
+	var sb = GetDefaultSandbox(user)
 
-    exist := a.controller.Get(sb.Name)
-    if exist != nil {
-        return "", fmt.Errorf("sandbox %s already exists", sb.Name)
-    }
+	err := json.NewDecoder(r.Body).Decode(sb)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode request body: %v", err)
+	}
+	//sb.Build()
 
-    err = a.controller.Create(sb)
+	klog.V(2).Infof("Create sandbox opts %v", sb)
 
-    if err != nil {
-        klog.Errorf("Failed to create sandbox, err: %v", err)
-        return "", fmt.Errorf("failed to create new sandbox, error: %v", err)
-    }
+	exist, _ := a.controller.Get(sb.Name)
+	if exist != nil {
+		return "", fmt.Errorf("sandbox %s already exists", sb.Name)
+	}
 
-    return fmt.Sprintf("Sandbox %s created successfully", sb.Name), nil
+	sbCreated, err := a.controller.Create(sb)
+
+	if err != nil {
+		klog.Errorf("Failed to create sandbox, err: %v", err)
+		return "", fmt.Errorf("failed to create new sandbox, error: %v", err)
+	}
+
+	return sbCreated, nil
 }
 
 func (a *Handler) ListSandbox(r *http.Request) (interface{}, error) {
-    sbs := a.controller.List()
-    if sbs == nil {
-        return "", fmt.Errorf("no sandboxes found")
-    }
+	//user := "default-user" // TODO get user from auth
 
-    return sbs, nil
+	sbs, err := a.controller.ListAll()
+	if err != nil {
+		return "", fmt.Errorf("no sandboxes found %v", err)
+	}
+
+	return sbs, nil
 }
 
 func (a *Handler) GetSandbox(r *http.Request) (interface{}, error) {
-    name := r.PathValue("name")
-    if name == "" {
-        return nil, fmt.Errorf("sandbox name is required")
-    }
+	name := r.PathValue("name")
+	if name == "" {
+		return nil, fmt.Errorf("sandbox name is required")
+	}
 
-    klog.V(2).Infof("Get sandbox name=%s", name)
+	klog.V(2).Infof("Get sandbox name=%s", name)
 
-    sb := a.controller.Get(name)
-    if sb == nil {
-        return "", fmt.Errorf("sandbox %s not found", name)
-    }
+	sb, _ := a.controller.Get(name)
+	if sb == nil {
+		return "", fmt.Errorf("sandbox %s not found", name)
+	}
 
-    return sb, nil
+	return sb, nil
 }
 
 func (a *Handler) DelSandbox(r *http.Request) (interface{}, error) {
-    name := r.PathValue("name")
-    if name == "" {
-        return nil, fmt.Errorf("sandbox name is required")
-    }
+	name := r.PathValue("name")
+	if name == "" {
+		return nil, fmt.Errorf("sandbox name is required")
+	}
 
-    klog.V(2).Infof("Delete sandbox name=%s", name)
+	klog.V(2).Infof("Delete sandbox name=%s", name)
 
-    err := a.controller.Delete(name)
-    if err != nil {
-        return "", fmt.Errorf("failed to delete sandbox %s: %v", name, err)
-    }
+	err := a.controller.Delete(name)
+	if err != nil {
+		return "", fmt.Errorf("failed to delete sandbox %s: %v", name, err)
+	}
 
-    return fmt.Sprintf("Sandbox %s deleted successfully", name), nil
+	return fmt.Sprintf("Sandbox %s deleted successfully", name), nil
 }

@@ -19,7 +19,12 @@ package sandbox
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 )
@@ -38,17 +43,43 @@ func init() {
 	}
 }
 
+// Defines values for SandboxState.
+type SandboxState string
+
+const (
+	Paused   SandboxState = "paused"
+	Running  SandboxState = "running"
+	Creating SandboxState = "creating"
+	Ready    SandboxState = "ready"
+	Unready  SandboxState = "unready"
+)
+
 type SandboxBase struct {
 
 	// Optionally give the sandbox a name.
 	Name string `json:"name,omitempty" required:"false" jsonschema:"The unique name of Sandbox."`
 
 	// The type to run as the container for the sandbox when Image is not set. e.g. aio/python/shell/
-	Environment string `json:"environment,omitempty" required:"false" jsonschema:"The sandbox Environment name."`
+	Template string `json:"template,omitempty" required:"false" jsonschema:"The sandbox Template name."`
+}
+
+type SandboxObject struct {
+	metav1.TypeMeta
+	metav1.ObjectMeta
+}
+
+func (in *SandboxObject) DeepCopyObject() runtime.Object {
+	return in
 }
 
 type Sandbox struct {
 	SandboxBase
+
+	// For K8s object metadata access
+	metav1.Object `json:"-"`
+
+	// Optionally give the sandbox a unique id.  compatible with E2B API
+	ID string `json:"id,omitempty" required:"false" jsonschema:"The unique id of Sandbox."`
 
 	// Set the CMD of the SandboxHandler, overriding any CMD of the container image.
 	Args []string `json:"args,omitempty"`
@@ -60,12 +91,12 @@ type Sandbox struct {
 	Image string `json:"image,omitempty"`
 
 	// Environment variables to set in the SandboxHandler.
-	Env map[string]*string `json:"env,omitempty"`
+	EnvVars map[string]string `json:"envVars,omitempty"`
 
-	// Maximum lifetime of the sandbox in minutes. timeout is reached apply to delete action
-	Timeout int `json:"timeout,omitempty" default:"300"` // default 60m
+	// Maximum lifetime of the sandbox in seconds. timeout is reached apply to delete action
+	Timeout int `json:"timeout,omitempty" default:"1800"` // default 30m, 0 is no timeout
 
-	// The amount of time in minutes that a sandbox can be idle before being terminated.
+	// The amount of time in seconds that a sandbox can be idle before being terminated.
 	IdleTimeout int `json:"idle_timeout,omitempty"` // default 10m
 
 	// Policy to apply when the idle is reached. Options are 'delete' or 'scaledown'.
@@ -86,49 +117,103 @@ type Sandbox struct {
 	// Memory limit
 	MemoryLimit string `json:"memory_limit,omitempty"  default:"1024Mi"`
 
-	// HTTP/2 encrypted ports
-	Ports []int `json:"ports,omitempty"`
+	// Port for startup probe and main service
+	Port int `json:"port,omitempty"  default:"8080"`
 
 	// Status of the sandbox. Options are 'creating', 'running', 'idle', 'deleting', 'error'.
-	Status string `json:"status,omitempty"`
+	Status SandboxState `json:"status,omitempty"`
+
+	// CreatedAt Time when the sandbox was started
+	CreatedAt time.Time `json:"created_at,omitempty"`
+
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-var DefaultSandbox = &Sandbox{
-	CPU:         "100m",
-	Memory:      "128Mi",
-	CPULimit:    "1000m",
-	MemoryLimit: "1024Mi",
-	Timeout:     60,
-	IdleTimeout: 10,
+const (
+	IDLabel   = "sbx-id"
+	UserLabel = "sbx-user"
+	TPLLabel  = "sbx-template"
+)
+
+func GetDefaultSandbox(user string) *Sandbox {
+	id := uuid.NewString()
+	// remove '-'
+	id = strings.Replace(id, "-", "", -1)
+
+	sb := &Sandbox{
+		ID:          id,
+		CPU:         "100m",
+		Memory:      "128Mi",
+		CPULimit:    "1000m",
+		MemoryLimit: "1024Mi",
+		Timeout:     30 * 60, // 30 minutes
+		IdleTimeout: 0,       // no idle timeout
+		IdlePolicy:  "delete",
+		Port:        8080,
+	}
+	sb.Object = &SandboxObject{}
+	sb.Object.SetAnnotations(map[string]string{})
+	sb.Object.SetLabels(map[string]string{})
+
+	labels := sb.GetLabels()
+	labels[IDLabel] = sb.ID
+	labels[UserLabel] = user
+	sb.SetLabels(labels)
+
+	return sb
 }
 
-func (o *Sandbox) Make() {
+func (o *Sandbox) Make() error {
 	// one day max
-	if o.Timeout >= 1440 {
-		o.Timeout = 1440
+	maxTimeout := 60 * 60 * 24
+	if o.Timeout >= maxTimeout && o.Timeout < 9999 {
+		o.Timeout = maxTimeout
 	}
+
+	// default timeout, since int default is 0 when not set, so we set it to 30 minutes, E2B default is 300s
+	if o.Timeout == 0 {
+		o.Timeout = 30 * 60 // default 30 minutes
+	}
+
+	// no timeout, when set to 9999
+	if o.Timeout == 9999 {
+		o.Timeout = 0 // no timeout
+	}
+
 	// one hour max
-	if o.IdleTimeout > 60 {
-		o.IdleTimeout = 60
+	if o.IdleTimeout > 60*60 {
+		o.IdleTimeout = 60 * 60
 	}
 
-	if o.Environment == "" && o.Image == "" {
+	if o.Template == "" && o.Image == "" {
 		o.Image = config.Cfg.SandboxDefaultImage
-		o.Environment = config.Cfg.SandboxDefaultEnvironment
+		o.Template = config.Cfg.SandboxDefaultTemplate
 	}
 
-	if o.Environment != "" && o.Image == "" {
-		o.Image = config.GetEnvironmentByName(o.Environment).Image
+	if o.Template != "" && o.Image == "" {
+		tpl, err := config.GetTemplateByName(o.Template)
+		if err != nil {
+			return fmt.Errorf("failed to get Template by name %s: %v", o.Template, err)
+		}
+		o.Image = tpl.Image
+		if tpl.Port != 0 {
+			o.Port = tpl.Port
+		}
 	}
 
-	if o.Environment == "" && o.Image != "" {
-		o.Environment = "custom"
+	if o.Template == "" && o.Image != "" {
+		o.Template = "custom"
 	}
 
 	if o.Name == "" {
-		o.Name = fmt.Sprintf("sandbox-%s-%d", o.Environment, time.Now().Unix())
+		o.Name = fmt.Sprintf("sandbox-%s-%d", o.Template, time.Now().Unix())
 	}
 
+	labels := o.GetLabels()
+	labels[TPLLabel] = o.Template
+	o.SetLabels(labels)
+
+	return nil
 }
 
 type SandboxKube struct {
@@ -178,7 +263,7 @@ spec:
         startupProbe:
             failureThreshold: 600
             tcpSocket:
-              port: 8080
+              port: {{.Sandbox.Port}}
             periodSeconds: 1
             successThreshold: 1
             timeoutSeconds: 3

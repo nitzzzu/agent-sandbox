@@ -17,75 +17,75 @@
 package activator
 
 import (
-    "context"
-    "fmt"
+	"context"
+	"fmt"
 
-    "github.com/agent-sandbox/agent-sandbox/pkg/config"
-    corev1 "k8s.io/api/core/v1"
-    v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-    "k8s.io/klog/v2"
-    kubeclient "knative.dev/pkg/client/injection/kube/client"
-    rsclient "knative.dev/pkg/client/injection/kube/informers/apps/v1/replicaset"
+	"github.com/agent-sandbox/agent-sandbox/pkg/config"
+	corev1 "k8s.io/api/core/v1"
+	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	rsclient "knative.dev/pkg/client/injection/kube/informers/apps/v1/replicaset"
 
-    "k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/record"
 )
 
 const (
-    ComponentName = "agent-sandbox-activator"
+	ComponentName = "agent-sandbox-activator"
 )
 
 const (
-    EventTypeLastRequest string = "LastRequestTime"
+	EventTypeLastRequest string = "LastRequestTime"
 
-    EventTypeLastResponse string = "LastResponseTime"
+	EventTypeLastResponse string = "LastResponseTime"
 )
 
 type Activator struct {
-    rootCtx  context.Context
-    recorder record.EventRecorder
+	rootCtx  context.Context
+	recorder record.EventRecorder
 }
 
 func NewActivator(ctx context.Context) *Activator {
-    recorder := getRecorder(ctx)
-    a := &Activator{
-        rootCtx:  ctx,
-        recorder: recorder,
-    }
-    return a
+	recorder := GetRecorder(ctx)
+	a := &Activator{
+		rootCtx:  ctx,
+		recorder: recorder,
+	}
+	return a
 }
 
 func (a *Activator) RecordLastEvent(eventType string, name string) {
-    rs, err := rsclient.Get(a.rootCtx).Lister().ReplicaSets(config.Cfg.SandboxNamespace).Get(name)
-    if err != nil {
-        klog.ErrorS(err, "Failed to record event ", "name", name)
-        return
-    }
-    annotations := make(map[string]string)
-    annotations["sandbox-data"] = rs.Annotations["sandbox-data"]
-    a.recorder.AnnotatedEventf(rs, annotations, corev1.EventTypeNormal, eventType, "")
+	rs, err := rsclient.Get(a.rootCtx).Lister().ReplicaSets(config.Cfg.SandboxNamespace).Get(name)
+	if err != nil {
+		klog.ErrorS(err, "Failed to record event ", "name", name)
+		return
+	}
+	annotations := make(map[string]string)
+	annotations["sandbox-data"] = rs.Annotations["sandbox-data"]
+	a.recorder.AnnotatedEventf(rs, annotations, corev1.EventTypeNormal, eventType, "")
 }
 
 // GetLastRequestTime gets the last request event for the given sandbox name.
 // return lastTimestamp of EventTypeLastRequest
 func (a *Activator) GetLastRequestTime(name string) int64 {
-    kubeClient := kubeclient.Get(a.rootCtx)
+	kubeClient := kubeclient.Get(a.rootCtx)
 
-    fieldSelector := fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=ReplicaSet", name)
+	fieldSelector := fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=ReplicaSet", name)
 
-    listOptions := v1meta.ListOptions{
-        FieldSelector: fieldSelector,
-    }
+	listOptions := v1meta.ListOptions{
+		FieldSelector: fieldSelector,
+	}
 
-    items, err := kubeClient.CoreV1().Events(config.Cfg.SandboxNamespace).List(context.TODO(), listOptions)
-    if err != nil {
-        klog.ErrorS(err, "Failed to get last request event", "name", name)
-        return 0
-    }
-    for _, item := range items.Items {
-        if item.Reason == EventTypeLastRequest {
-            return item.LastTimestamp.Unix()
-        }
-    }
+	items, err := kubeClient.CoreV1().Events(config.Cfg.SandboxNamespace).List(context.TODO(), listOptions)
+	if err != nil {
+		klog.ErrorS(err, "Failed to get last request event", "name", name)
+		return 0
+	}
+	for _, item := range items.Items {
+		if item.Reason == EventTypeLastRequest {
+			return item.LastTimestamp.Unix()
+		}
+	}
 
-    return 0
+	return 0
 }

@@ -17,30 +17,30 @@
 package handler
 
 import (
-    "encoding/json"
-    "net/http"
+	"encoding/json"
+	"net/http"
 )
 
 type response struct {
-    Code  string      `json:"code"`
-    Data  interface{} `json:"data,omitempty"`
-    Error string      `json:"error,omitempty"`
+	Code  string      `json:"code"`
+	Data  interface{} `json:"data,omitempty"`
+	Error string      `json:"error,omitempty"`
 }
 
 func Ok(w http.ResponseWriter, s interface{}) {
-    data := &response{
-        Code: "0",
-        Data: s,
-    }
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(data)
+	data := &response{
+		Code: "0",
+		Data: s,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }
 
 func Err(w http.ResponseWriter, s string) {
-    data := &response{
-        Code:  "500",
-        Error: s,
-    }
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(data)
+	data := &response{
+		Code:  "400",
+		Error: s,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }
