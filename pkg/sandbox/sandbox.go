@@ -144,8 +144,8 @@ func GetDefaultSandbox(user string) *Sandbox {
 		ID:          id,
 		CPU:         "100m",
 		Memory:      "128Mi",
-		CPULimit:    "1000m",
-		MemoryLimit: "1024Mi",
+		CPULimit:    "2000m",
+		MemoryLimit: "4024Mi",
 		Timeout:     30 * 60, // 30 minutes
 		IdleTimeout: 0,       // no idle timeout
 		IdlePolicy:  "delete",

@@ -61,7 +61,7 @@ func (s *SandboxRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if port == "" {
-		port = "8080"
+		port = "0"
 	}
 
 	prefixToStrip := fmt.Sprintf("/sandbox/%s", name)

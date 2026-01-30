@@ -24,7 +24,7 @@
   {
     "name": "openclaw",
     "image": "ghcr.io/agent-sandbox/openclaw:2026.1.29",
-    "port": 18788,
+    "port": 18789,
     "description": "providing a OpenClaw environment"
   }
 ]

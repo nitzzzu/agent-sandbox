@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
+	"strconv"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -51,6 +52,10 @@ func AcquireDest(rootCtx context.Context, name string, port string) (*url.URL, e
 
 	pod := pods[rand.Intn(len(pods))]
 	ip := pod.Status.PodIP
+	// read port from first container port if not specified
+	if port == "0" {
+		port = strconv.FormatInt(int64(pod.Spec.Containers[0].Ports[0].ContainerPort), 10)
+	}
 	if ip == "" {
 		return nil, fmt.Errorf("sandbox pod IP not found")
 	}
