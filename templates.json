@@ -20,6 +20,12 @@
     "image": "ghcr.io/agent-sandbox/e2b-desktop:0.2.0",
     "port": 49983,
     "description": "providing a desktop environment, E2B featured."
+  },
+  {
+    "name": "openclaw",
+    "image": "ghcr.io/agent-sandbox/openclaw:2026.1.29",
+    "port": 18788,
+    "description": "providing a OpenClaw environment"
   }
 ]
 
