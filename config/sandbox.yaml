@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: {{.Sandbox.Name}}
+  namespace: {{.Namespace}}
+  annotations:
+    sandbox-data:  |
+      {{.RawData}}
+  labels:
+    sandbox: "{{.Sandbox.Name}}"
+    owner: agent-sandbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      sandbox: "{{.Sandbox.Name}}"
+  template:
+    metadata:
+      labels:
+        sandbox: "{{.Sandbox.Name}}"
+        owner: agent-sandbox
+    spec:
+      containers:
+        - name: sandbox
+          image: {{.Sandbox.Image}}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{.Sandbox.Port}}
+          env:
+            - name: INSTANCE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: {{.Sandbox.CPU}}
+              memory: {{.Sandbox.Memory}}
+            limits:
+              cpu: {{.Sandbox.CPULimit}}
+              memory: {{.Sandbox.MemoryLimit}}
+          startupProbe:
+            failureThreshold: 600
+            tcpSocket:
+              port: {{.Sandbox.Port}}
+            periodSeconds: 1
+            successThreshold: 1
+            timeoutSeconds: 3

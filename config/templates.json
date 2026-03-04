@@ -1,0 +1,42 @@
+[
+  {
+    "name": "aio",
+    "image": "ghcr.io/agent-infra/sandbox:latest",
+    "description": "providing a comprehensive environment combines Web Browser, Shell, File, and Code Server. You can use it when you need multi functionalities in one environment, e.g. browsing the web, running shell commands and execution code."
+  },
+  {
+    "name": "opencode",
+    "image": "ghcr.io/anomalyco/opencode:1.1.16",
+    "description": "providing a complete environment for OpenCode."
+  },
+  {
+    "name": "code-interpreter",
+    "image": "ghcr.io/agent-sandbox/code-interpreter:0.2.0",
+    "port": 49999,
+    "pool": {
+      "size": 0
+    },
+    "description": "providing a code interpreter environment, E2B featured."
+  },
+  {
+    "name": "desktop",
+    "image": "ghcr.io/agent-sandbox/e2b-desktop:0.2.0",
+    "port": 49983,
+    "description": "providing a desktop environment, E2B featured."
+  },
+  {
+    "name": "openclaw",
+    "image": "ghcr.io/agent-sandbox/openclaw:2026.1.29",
+    "port": 18789,
+    "description": "providing a OpenClaw environment"
+  },
+  {
+    "name": "code-interpreter-biz",
+    "pattern": "faas-code-(?P<name>.+)\\.(?P<version>.+)$",
+    "image": "ghcr.io/agent-sandbox/<name>:<version>",
+    "type": "dynamic",
+    "port": 49999,
+    "description": "providing a dynamic code interpreter environment, E2B featured."
+  }
+]
+

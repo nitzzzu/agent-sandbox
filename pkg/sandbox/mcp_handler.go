@@ -99,7 +99,8 @@ func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 }
 
 func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
-	sb := GetDefaultSandbox("default-mcp-user") // TODO get user from auth
+	sb := GetDefaultSandbox() // TODO get user from auth
+	sb.User = "default-mcp-user"
 
 	sb.SandboxBase = *sandbox
 
@@ -108,6 +109,11 @@ func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolReques
 	exist, _ := a.controller.Get(sb.Name)
 	if exist != nil {
 		return nil, nil, fmt.Errorf("sandbox %s already exists", sb.Name)
+	}
+
+	// init name and valid fields
+	if err := sb.Make(); err != nil {
+		return nil, nil, fmt.Errorf("error create sandbox: %v", err)
 	}
 
 	sbCreated, err := a.controller.Create(sb)

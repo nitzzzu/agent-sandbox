@@ -17,27 +17,22 @@
 package sandbox
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
+	v1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	rsclient "knative.dev/pkg/client/injection/kube/informers/apps/v1/replicaset"
 	podclient "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
 
 	"context"
-	"text/template"
 
-	"sigs.k8s.io/yaml"
-
-	v1 "k8s.io/api/apps/v1"
 	v1core "k8s.io/api/core/v1"
 	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -45,21 +40,51 @@ import (
 type Controller struct {
 	client  kubernetes.Interface
 	rootCtx context.Context
+	pl      *PoolManager
 }
 
-func NewController(ctx context.Context) *Controller {
+func NewController(ctx context.Context, pl *PoolManager) *Controller {
+	c := kubeclient.Get(ctx)
 	sh := &Controller{
 		rootCtx: ctx,
+		client:  c,
+		pl:      pl,
 	}
-	sh.client = kubeclient.Get(ctx)
 	return sh
 }
 
-func (s *Controller) Get(name string) (*Sandbox, error) {
-	rs, err := s.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Get(context.TODO(), name, v1meta.GetOptions{})
+func (s *Controller) GetRSByID(id string) (*v1.ReplicaSet, error) {
+	selector := labels.Set{IDLabel: id}.AsSelector()
+	rss, err := rsclient.Get(s.rootCtx).Lister().List(selector)
+	if err != nil {
+		klog.Errorf("Failed to list rs, id %s error %v", id, err)
+		return nil, err
+	}
+	if len(rss) == 0 {
+		klog.Warningf("No rs found with id %s", id)
+		return nil, fmt.Errorf("no rs found with id %s", id)
+	}
+	return rss[0], nil
+}
+
+func (s *Controller) GetByID(id string) (*Sandbox, error) {
+	rs, err := s.GetRSByID(id)
 	if err != nil {
 		return nil, err
 	}
+	return s.GetSandbox(rs)
+}
+
+func (s *Controller) Get(name string) (*Sandbox, error) {
+	rs, err := rsclient.Get(s.rootCtx).Lister().ReplicaSets(config.Cfg.SandboxNamespace).Get(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.GetSandbox(rs)
+}
+
+func (s *Controller) GetSandbox(rs *v1.ReplicaSet) (*Sandbox, error) {
 	raw := rs.Annotations["sandbox-data"]
 	sb := &Sandbox{}
 	json.Unmarshal([]byte(raw), sb)
@@ -72,12 +97,16 @@ func (s *Controller) Get(name string) (*Sandbox, error) {
 	} else {
 		sb.Status = Creating
 	}
-	sb.CreatedAt = rs.GetCreationTimestamp().Time
+
 	return sb, nil
 }
 
 func (s *Controller) ListAll() ([]*Sandbox, error) {
-	selector, _ := labels.Parse("owner=agent-sandbox")
+	selector := labels.Set{
+		"owner":   "agent-sandbox",
+		PoolLabel: "false",
+	}.AsSelector()
+
 	return s.DoList(selector)
 }
 
@@ -105,7 +134,7 @@ func (s *Controller) DoList(selector labels.Selector) ([]*Sandbox, error) {
 		} else {
 			sb.Status = Creating
 		}
-		sb.CreatedAt = rs.GetCreationTimestamp().Time
+
 		sandboxes = append(sandboxes, sb)
 	}
 	//sort by CreatedAt desc
@@ -115,96 +144,34 @@ func (s *Controller) DoList(selector labels.Selector) ([]*Sandbox, error) {
 	return sandboxes, nil
 }
 
+func IsAcquireError(err error) bool {
+	return err != nil
+}
+
 func (s *Controller) Create(sb *Sandbox) (*Sandbox, error) {
-	kubeClient := kubeclient.Get(s.rootCtx)
-	if kubeClient == nil {
-		return nil, fmt.Errorf("failed to get kube client, kubeClient is nil")
-	}
+	// retry to AcquirePoolReplicaSet if error is conflict,
+	//because multiple sandboxes may try to acquire the same pool replicaset
+	acquired := &v1.ReplicaSet{}
+	err := retry.OnError(retry.DefaultRetry, IsAcquireError, func() error {
+		var err error
+		acquired, err = s.pl.AcquirePoolReplicaSet(sb)
+		return err
+	})
 
-	if err := sb.Make(); err != nil {
-		return nil, fmt.Errorf("error create sandbox: %v", err)
-	}
-
-	raw, _ := json.Marshal(sb)
-	tplData := SandboxKube{
-		Sandbox:   sb,
-		RawData:   string(raw),
-		Namespace: config.Cfg.SandboxNamespace,
-	}
-	tmpl, err := template.New("rs").Parse(SandboxDeployTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("parse template fail: %v", err)
+		klog.Errorf("failed to acquire pool replica set, reqeust %v, error %v", sb, err)
+		return nil, err
 	}
 
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, tplData)
-	if err != nil {
-		return nil, fmt.Errorf("execute template fail: %v", err)
-	}
+	sb.Object = acquired
 
-	rsObj := &v1.ReplicaSet{}
-	if err = yaml.Unmarshal(buf.Bytes(), rsObj); err != nil {
-		return nil, fmt.Errorf("unmarshal template fail: %v", err)
-	}
-
-	anns := rsObj.GetAnnotations()
-	lbs := rsObj.GetLabels()
-	for k, v := range tplData.Sandbox.GetAnnotations() {
-		anns[k] = v
-	}
-	for k, v := range tplData.Sandbox.GetLabels() {
-		lbs[k] = v
-	}
-	rsObj.SetAnnotations(anns)
-	rsObj.SetLabels(lbs)
-
-	// Set annotations and labels to pod template
-	podAnns := rsObj.Spec.Template.GetAnnotations()
-	if podAnns == nil {
-		podAnns = make(map[string]string)
-	}
-	podLbs := rsObj.Spec.Template.GetLabels()
-	if podLbs == nil {
-		podLbs = make(map[string]string)
-	}
-	for k, v := range anns {
-		podAnns[k] = v
-	}
-	for k, v := range lbs {
-		podLbs[k] = v
-	}
-	rsObj.Spec.Template.SetAnnotations(podAnns)
-	rsObj.Spec.Template.SetLabels(podLbs)
-
-	if _, err := s.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Create(context.TODO(), rsObj, v1meta.CreateOptions{}); err != nil {
-		return nil, fmt.Errorf("create sandbox fail: %v", err)
-	}
-
-	sb.Status = Creating
-
-	if perr := wait.PollUntilContextTimeout(context.TODO(), 500*time.Millisecond, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
-		rsCreated, err := s.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Get(context.TODO(), sb.Name, v1meta.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		// Check if the ReplicaSet is ready
-		replicas := *rsCreated.Spec.Replicas
-		if replicas == rsCreated.Status.ReadyReplicas {
-			klog.Infof("ReplicaSet %s in namespace %s is ready. Desired: %d, Ready: %d",
-				sb.Name, config.Cfg.SandboxNamespace, replicas, rsCreated.Status.ReadyReplicas)
-			return true, nil
-		} else {
-			klog.V(2).Infof("ReplicaSet %s in namespace %s is NOT ready. Desired: %d, Ready: %d\n",
-				sb.Name, config.Cfg.SandboxNamespace, replicas, rsCreated.Status.ReadyReplicas)
-			return false, nil
-		}
-	}); perr != nil {
+	// Wait for ReplicaSet to be ready
+	if perr := s.WaitForReplicaSetReady(sb.Name); perr != nil {
 		klog.Errorf("timeout waiting for sandbox to be ready: %v, instance not ready yet, please get it leater or check pod status", perr)
 		return sb, nil
 	}
 
 	sb.Status = Running
-	sb.CreatedAt = time.Now()
 	return sb, nil
 }
 
@@ -217,7 +184,16 @@ func (s *Controller) GetInstances(name string) []*v1core.Pod {
 	return pods
 }
 
+func (s *Controller) DeleteByID(id string) error {
+	rs, err := s.GetRSByID(id)
+	if err != nil {
+		return err
+	}
+	return s.Delete(rs.Name)
+}
+
 func (s *Controller) Delete(name string) error {
 	err := s.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Delete(context.TODO(), name, v1meta.DeleteOptions{})
 	return err
+	//return nil
 }

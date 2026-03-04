@@ -22,9 +22,6 @@ import (
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/activator"
 	"github.com/agent-sandbox/agent-sandbox/pkg/sandbox"
-	v1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -45,54 +42,16 @@ func NewScaler(ctx context.Context, a *activator.Activator, c *sandbox.Controlle
 
 func (s *Scaler) RunScaling() {
 	// Periodically check for sandboxes to scale down
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			s.ScalingDownOfTimeout()
+			//s.ScalingDownOfIdleTimeout()
 		case <-s.rootCtx.Done():
 			klog.Info("Scaler stopping")
 			return
 		}
 	}
-}
-
-func (s *Scaler) ScalingDownOfTimeout() {
-	sbs, err := s.controller.ListAll()
-	if err != nil {
-		klog.Error("Failed to list sandboxes for scaling down: ", err)
-		return
-	}
-
-	for _, sb := range sbs {
-		createT := sb.GetCreationTimestamp()
-		timeout := sb.Timeout
-		if timeout == 0 {
-			klog.V(2).Infof("Sandbox %v timeout is 0, skipping scaling down", sb.Name)
-			continue
-		}
-		tt := createT.Add(time.Duration(timeout) * time.Second)
-		if tt.Before(time.Now()) {
-			if err := s.controller.Delete(sb.Name); err != nil {
-				klog.Errorf("Failed to scale down sandbox %v, error %v", sb, err)
-				continue
-			}
-			r := activator.GetRecorder(s.rootCtx)
-			obj := &v1.ReplicaSet{
-				TypeMeta: v1meta.TypeMeta{
-					Kind:       "ReplicaSet",
-					APIVersion: "apps/v1",
-				},
-				ObjectMeta: v1meta.ObjectMeta{
-					Name:      sb.Name,
-					Namespace: sb.GetNamespace(),
-				},
-			}
-			r.Event(obj, corev1.EventTypeNormal, "ScaleDownTimeout", "Sandbox scaled down due to timeout")
-			klog.Infof("Scaled down sandbox %s CreationTimestamp %s Timeout %v IdleTimeout %v", sb.Name, sb.GetCreationTimestamp(), sb.Timeout, sb.IdleTimeout)
-		}
-
-	}
-
 }

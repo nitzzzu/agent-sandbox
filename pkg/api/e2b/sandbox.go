@@ -39,9 +39,7 @@ func (a *Handler) GetSandbox(w http.ResponseWriter, r *http.Request) {
 
 	klog.V(2).Infof("Get sandbox sandboxID=%s", sandboxID)
 
-	sbxName := GenSandboxName(sandboxID)
-
-	sb, err := a.controller.Get(sbxName)
+	sb, err := a.controller.GetByID(sandboxID)
 	if err != nil {
 		klog.Errorf("Get sandbox %s error: %v", sandboxID, err)
 		sendAPIError(w, http.StatusNotFound, fmt.Sprintf("sandbox %s not found", sandboxID))
@@ -85,9 +83,7 @@ func (a *Handler) DeleteSandbox(w http.ResponseWriter, r *http.Request) {
 
 	klog.V(2).Infof("Delete sandbox sandboxID=%s", sandboxID)
 
-	sbxName := GenSandboxName(sandboxID)
-
-	err := a.controller.Delete(sbxName)
+	err := a.controller.DeleteByID(sandboxID)
 	if err != nil {
 		klog.ErrorS(err, "error deleting sandbox", "sandboxID", sandboxID)
 		sendAPIError(w, http.StatusBadRequest, fmt.Sprintf("failed to delete sandbox %s: %v", sandboxID, err))
@@ -103,6 +99,16 @@ func (a *Handler) PostSandboxes(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		sendAPIError(w, http.StatusBadRequest, fmt.Sprintf("failed to decode request body: %v", err))
+		return
+	}
+
+	klog.V(2).Infof("Post sandboxes with request %+v", request)
+
+	// check template is valid, includes number,- and string, e.g. sandbox-template-demo-version2026 by regexp
+	patten := `^[a-zA-Z0-9\-\.]+$`
+	matched, _ := regexp.MatchString(patten, request.TemplateID)
+	if !matched {
+		sendAPIError(w, http.StatusBadRequest, "invalid template ID format, only alphanumeric characters and hyphens are allowed")
 		return
 	}
 
@@ -125,34 +131,28 @@ func (a *Handler) CreateSandbox(ctx context.Context, newSandbox *api.NewSandbox)
 		}
 	}
 
-	var sb = sandbox.GetDefaultSandbox(user)
-	accessToken := sb.ID
+	// gen id and default labels of user, key
+	var sb = sandbox.GetDefaultSandbox()
+	sb.User = user
 
 	//code-interpreter-v1, remove  rightmost  version part of TemplateID in default mode
 	tplID := strings.Split(newSandbox.TemplateID, "-v")[0]
 
-	sb.Name = GenSandboxName(sb.ID)
 	sb.Template = tplID
 	sb.Metadata = newSandbox.Metadata
 	sb.EnvVars = newSandbox.EnvVars
 	sb.Timeout = newSandbox.Timeout
 
-	klog.Infof("Creating sandbox orgin newSandbox is %+v", newSandbox)
-
+	// init name and valid fields
 	if err := sb.Make(); err != nil {
-		klog.ErrorS(err, "error create sandbox", "sandbox", sb)
 		return nil, &APIError{
 			Err:       err,
-			ClientMsg: "error creating sandbox, error " + err.Error(),
+			ClientMsg: "error creating sandbox, params error " + err.Error(),
 			Code:      http.StatusBadRequest,
 		}
 	}
 
-	klog.Infof("Creating sandbox with values%+v", sb)
-
-	annotations := sb.GetAnnotations()
-	annotations["e2b.envd-access-token"] = accessToken
-	sb.SetAnnotations(annotations)
+	klog.Infof("Creating sandbox orgin newSandbox is %+v", newSandbox)
 
 	sbCreated, err := a.controller.Create(sb)
 	if err != nil {
@@ -177,9 +177,7 @@ func (a *Handler) ConnectSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sbxName := GenSandboxName(sandboxID)
-
-	sb, err := a.controller.Get(sbxName)
+	sb, err := a.controller.GetByID(sandboxID)
 	if err != nil {
 		klog.Errorf("Get sandbox %s error: %v", sandboxID, err)
 		sendAPIError(w, http.StatusNotFound, fmt.Sprintf("sandbox %s not found", sandboxID))
@@ -210,7 +208,13 @@ func (a *Handler) SandboxRouterOfPath() http.HandlerFunc {
 			return
 		}
 
-		sbName := GenSandboxName(sandboxID)
+		sbRS, err := a.controller.GetRSByID(sandboxID)
+		if err != nil {
+			klog.Errorf("Get sandbox %s error: %v", sandboxID, err)
+			sendAPIError(w, http.StatusNotFound, fmt.Sprintf("sandbox %s not found", sandboxID))
+			return
+		}
+		sbName := sbRS.Name
 
 		// rewrite url to /sandbox/{name}/{port}/...
 		prefixToStrip := fmt.Sprintf("/sandboxes/router/%s/%s", sandboxID, port)
@@ -243,7 +247,7 @@ func (a *Handler) SandboxRouterNative() http.HandlerFunc {
 		if !matched {
 			// otherwise just return 404
 			klog.Info("no matched sandbox proxy pattern, url=", reqHost)
-			sendAPIError(w, http.StatusBadRequest, "invalid sandbox request pattern 1")
+			sendAPIError(w, http.StatusNotFound, "invalid sandbox request pattern 1")
 			return
 		}
 
@@ -252,13 +256,19 @@ func (a *Handler) SandboxRouterNative() http.HandlerFunc {
 		submatches := portSvr.FindStringSubmatch(reqHost)
 		if len(submatches) < 3 {
 			klog.Info("invalid matched sandbox request pattern, url=", reqHost)
-			sendAPIError(w, http.StatusBadRequest, "invalid sandbox request pattern 2")
+			sendAPIError(w, http.StatusNotFound, "invalid sandbox request pattern 2")
 			return
 		}
 		port := submatches[1]
 		sandboxID := submatches[2]
 
-		sbName := GenSandboxName(sandboxID)
+		sbRS, err := a.controller.GetRSByID(sandboxID)
+		if err != nil {
+			klog.Errorf("Get sandbox %s error: %v", sandboxID, err)
+			sendAPIError(w, http.StatusNotFound, fmt.Sprintf("sandbox %s not found", sandboxID))
+			return
+		}
+		sbName := sbRS.Name
 
 		// rewrite url to /sandbox/{name}/{port}/...
 		pxyURL := fmt.Sprintf("/sandbox/%s%s", sbName, r.URL.Path)
@@ -281,15 +291,15 @@ func (a *Handler) convertToE2BSandbox(sb *sandbox.Sandbox) *api.Sandbox {
 	apiSbx.SandboxID = sb.ID
 	apiSbx.TemplateID = sb.Template
 
-	annotations := sb.GetAnnotations()
-	if accessToken, ok := annotations["e2b.envd-access-token"]; ok {
-		apiSbx.EnvdAccessToken = accessToken
-		apiSbx.TrafficAccessToken = accessToken
-	}
+	apiSbx.EnvdAccessToken = sb.ID
+	apiSbx.TrafficAccessToken = sb.ID
 
+	sb.Metadata = map[string]string{}
 	if sb.Metadata != nil {
 		apiSbx.Metadata = sb.Metadata
 	}
+
+	apiSbx.Metadata["name"] = sb.Name
 
 	rs := utils.CalculateResourceToQuantity(sb)
 	apiSbx.CpuCount = rs.CPUMilli
@@ -304,10 +314,4 @@ func (a *Handler) convertToE2BSandbox(sb *sandbox.Sandbox) *api.Sandbox {
 	}
 
 	return apiSbx
-}
-
-func GenSandboxName(id string) string {
-	name := fmt.Sprintf("sandbox-e2b-%s", id)
-
-	return name
 }

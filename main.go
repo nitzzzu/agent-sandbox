@@ -70,14 +70,21 @@ func main() {
 	}
 	log.Printf("Starting informers %v", len(informers))
 
+	pl := sandbox.NewPoolManager(rootCtx)
 	a := activator.NewActivator(rootCtx)
-	c := sandbox.NewController(rootCtx)
+	c := sandbox.NewController(rootCtx, pl)
 
 	// Start the autoscaler
 	go func() {
 		s := scaler.NewScaler(rootCtx, a, c)
-		klog.Info("Starting scaler")
+		klog.Info("Starting timeout and idle timeout  scaler")
 		s.RunScaling()
+	}()
+
+	go func() {
+		// Start the pool syncer
+		klog.Info("Starting pool syncer")
+		pl.StartPoolSyncing()
 	}()
 
 	klog.Info("Starting the api server")

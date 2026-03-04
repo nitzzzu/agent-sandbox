@@ -20,20 +20,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/kelseyhightower/envconfig"
 	"k8s.io/klog/v2"
 )
 
+type TemplatePool struct {
+	Size int `json:"size"`
+}
+
 type Template struct {
-	Name        string `json:"name" required:"false"`
-	Image       string `json:"image" required:"false"`
-	Port        int    `json:"port" required:"false"`
-	Description string `json:"description" required:"false"`
+	Name        string       `json:"name" required:"false"`
+	Pattern     string       `json:"pattern" required:"false"`
+	Image       string       `json:"image" required:"false"`
+	Port        int          `json:"port" required:"false"`
+	Type        string       `json:"type" required:"false" description:"dynamic or static, default is static, dynamic means template is dynamic by regexp"`
+	Pool        TemplatePool `json:"pool" required:"false"`
+	Description string       `json:"description" required:"false"`
 }
 
 var Cfg *Config
-var Templates *[]*Template
+var Templates []*Template
 
 type Config struct {
 	APIVersion string `split_words:"true" default:"v1" required:"false"`
@@ -43,9 +52,9 @@ type Config struct {
 	// witch Kubernetes namespace to create sandboxes Replicaset&Pod in
 	SandboxNamespace string `split_words:"true" default:"default" required:"false"`
 
-	SandboxTemplateFile string `split_words:"true" default:"" required:"false"`
+	SandboxTemplateFile string `split_words:"true" default:"config/sandbox.yaml" required:"false"`
 
-	SandboxTemplatesConfigFile string `split_words:"true" default:"templates.json" required:"false"`
+	SandboxTemplatesConfigFile string `split_words:"true" default:"config/templates.json" required:"false"`
 	SandboxDefaultImage        string `split_words:"true" default:"ghcr.io/agent-infra/sandbox:latest" required:"false"`
 	SandboxDefaultTemplate     string `split_words:"true" default:"aio" required:"false"`
 }
@@ -92,20 +101,57 @@ func LoadTemplates() {
 		}
 	}
 
-	Templates = &tpls
+	Templates = tpls
 
 	//log loaded envs
-	for _, env := range *Templates {
+	for _, env := range Templates {
 		klog.Infof("Loaded Template object: %+v", env)
 	}
 }
 
 func GetTemplateByName(name string) (*Template, error) {
-	for _, env := range *Templates {
+	for _, env := range Templates {
 		if env.Name == name {
 			return env, nil
 		}
 	}
+
+	for _, t := range Templates {
+		if t.Type == "dynamic" {
+			image := t.Image
+			//match by regexp
+			re := regexp.MustCompile(t.Pattern)
+			match := re.FindStringSubmatch(name)
+			if len(match) == 0 {
+				continue
+			}
+
+			if len(match) > 0 {
+				versionIndex := re.SubexpIndex("version")
+				nameIndex := re.SubexpIndex("name")
+				if nameIndex == -1 || versionIndex == -1 {
+					continue
+				}
+
+				tversion := match[versionIndex]
+				tname := match[nameIndex]
+				image = strings.ReplaceAll(image, "<name>", tname)
+				image = strings.ReplaceAll(image, "<version>", tversion)
+			}
+
+			dynT := &Template{
+				Name:        name,
+				Image:       image,
+				Port:        t.Port,
+				Pattern:     t.Pattern,
+				Pool:        t.Pool,
+				Type:        t.Type,
+				Description: t.Description,
+			}
+			return dynT, nil
+		}
+	}
+
 	klog.Errorf("Template %s not found", name)
 	return nil, fmt.Errorf("Template  %s not found", name)
 }
@@ -118,7 +164,10 @@ func GetTemplatesForMCPTools() string {
 	}
 
 	var tpls []TplForTool
-	for _, env := range *Templates {
+	for _, env := range Templates {
+		if env.Type == "dynamic" {
+			continue
+		}
 		tpls = append(tpls, TplForTool{
 			Name:        env.Name,
 			Description: env.Description,

@@ -19,6 +19,7 @@ package sandbox
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,15 +33,12 @@ import (
 var SandboxDeployTemplate string
 
 func init() {
-	SandboxDeployTemplate = defaultSandboxTemplate
-	if config.Cfg.SandboxTemplateFile != "" {
-		var err error
-		var val []byte
-		if val, err = os.ReadFile(config.Cfg.SandboxTemplateFile); err != nil {
-			panic(err)
-		}
-		SandboxDeployTemplate = string(val)
+	var err error
+	var val []byte
+	if val, err = os.ReadFile(config.Cfg.SandboxTemplateFile); err != nil {
+		panic(err)
 	}
+	SandboxDeployTemplate = string(val)
 }
 
 // Defines values for SandboxState.
@@ -77,6 +75,12 @@ type Sandbox struct {
 
 	// For K8s object metadata access
 	metav1.Object `json:"-"`
+
+	User string `json:"-"`
+
+	IsPool bool `json:"-"`
+
+	TemplateObj *config.Template `json:"-"`
 
 	// Optionally give the sandbox a unique id.  compatible with E2B API
 	ID string `json:"id,omitempty" required:"false" jsonschema:"The unique id of Sandbox."`
@@ -133,21 +137,18 @@ const (
 	IDLabel   = "sbx-id"
 	UserLabel = "sbx-user"
 	TPLLabel  = "sbx-template"
+	PoolLabel = "sbx-pool" // "true" indicates this is a pool replicaset
+	TimeLabel = "sbx-time" // timestamp of creation
 )
 
-func GetDefaultSandbox(user string) *Sandbox {
-	id := uuid.NewString()
-	// remove '-'
-	id = strings.Replace(id, "-", "", -1)
-
+func GetDefaultSandbox() *Sandbox {
 	sb := &Sandbox{
-		ID:          id,
-		CPU:         "100m",
-		Memory:      "128Mi",
+		CPU:         "50m",
+		Memory:      "100Mi",
 		CPULimit:    "2000m",
-		MemoryLimit: "4024Mi",
+		MemoryLimit: "4000Mi",
 		Timeout:     30 * 60, // 30 minutes
-		IdleTimeout: 0,       // no idle timeout
+		IdleTimeout: -1,      // no idle timeout
 		IdlePolicy:  "delete",
 		Port:        8080,
 	}
@@ -155,65 +156,117 @@ func GetDefaultSandbox(user string) *Sandbox {
 	sb.Object.SetAnnotations(map[string]string{})
 	sb.Object.SetLabels(map[string]string{})
 
-	labels := sb.GetLabels()
-	labels[IDLabel] = sb.ID
-	labels[UserLabel] = user
-	sb.SetLabels(labels)
-
 	return sb
 }
 
-func (o *Sandbox) Make() error {
+func (sb *Sandbox) Make() error {
 	// one day max
 	maxTimeout := 60 * 60 * 24
-	if o.Timeout >= maxTimeout && o.Timeout < 9999 {
-		o.Timeout = maxTimeout
+	if sb.Timeout >= maxTimeout {
+		sb.Timeout = maxTimeout
 	}
 
 	// default timeout, since int default is 0 when not set, so we set it to 30 minutes, E2B default is 300s
-	if o.Timeout == 0 {
-		o.Timeout = 30 * 60 // default 30 minutes
-	}
-
-	// no timeout, when set to 9999
-	if o.Timeout == 9999 {
-		o.Timeout = 0 // no timeout
+	if sb.Timeout == 0 {
+		sb.Timeout = 30 * 60 // default 30 minutes
 	}
 
 	// one hour max
-	if o.IdleTimeout > 60*60 {
-		o.IdleTimeout = 60 * 60
+	if sb.IdleTimeout > 60*60 {
+		sb.IdleTimeout = 60 * 60
 	}
 
-	if o.Template == "" && o.Image == "" {
-		o.Image = config.Cfg.SandboxDefaultImage
-		o.Template = config.Cfg.SandboxDefaultTemplate
+	t := &config.Template{}
+
+	// no set any params, use default template
+	if sb.Template == "" && sb.Image == "" {
+		sb.Template = config.Cfg.SandboxDefaultTemplate
+		sb.Image = config.Cfg.SandboxDefaultImage
+		t = &config.Template{
+			Name:  sb.Template,
+			Image: sb.Image,
+		}
 	}
 
-	if o.Template != "" && o.Image == "" {
-		tpl, err := config.GetTemplateByName(o.Template)
+	if sb.Template != "" {
+		tpl, err := config.GetTemplateByName(sb.Template)
 		if err != nil {
-			return fmt.Errorf("failed to get Template by name %s: %v", o.Template, err)
+			return fmt.Errorf("failed to get Template by name %s: %v", sb.Template, err)
 		}
-		o.Image = tpl.Image
+		t = tpl
+		sb.Image = tpl.Image
 		if tpl.Port != 0 {
-			o.Port = tpl.Port
+			sb.Port = tpl.Port
 		}
 	}
 
-	if o.Template == "" && o.Image != "" {
-		o.Template = "custom"
+	// use image create sandbox, template name not set, use "custom" as template name
+	if sb.Template == "" && sb.Image != "" {
+		sb.Template = "custom"
+		t = &config.Template{
+			Name:  sb.Template,
+			Image: sb.Image,
+		}
 	}
 
-	if o.Name == "" {
-		o.Name = fmt.Sprintf("sandbox-%s-%d", o.Template, time.Now().Unix())
+	sb.TemplateObj = t
+
+	id := uuid.NewString()
+	// remove '-'
+	id = strings.Replace(id, "-", "", -1)
+
+	if sb.Name == "" {
+		prefix := t.Name
+
+		// k8s name max length is 63
+		// take first 16 chars of id to make name more unique
+		postFix := id[:20]
+		sb.Name = fmt.Sprintf("sbx-%s-%s", prefix, postFix)
+		if len(sb.Name) > 63 {
+			sb.Name = sb.Name[:63]
+		}
 	}
 
-	labels := o.GetLabels()
-	labels[TPLLabel] = o.Template
-	o.SetLabels(labels)
+	sb.SetCreationTimestamp(metav1.Now())
+	sb.CreatedAt = time.Now()
+
+	sb.ID = id
+	labels := sb.GetLabels()
+	labels[IDLabel] = id
+	labels[TPLLabel] = sb.Template
+	labels[UserLabel] = sb.User
+	labels[TimeLabel] = strconv.FormatInt(time.Now().Unix(), 10)
+
+	sb.SetName(sb.Name)
+	sb.SetLabels(labels)
+
+	sb.Status = Creating
 
 	return nil
+}
+
+func (sb *Sandbox) DeepCopy() *Sandbox {
+	if sb == nil {
+		return nil
+	}
+	out := GetDefaultSandbox()
+	out.ID = ""
+	out.Name = ""
+	out.Template = sb.Template
+	out.Timeout = sb.Timeout
+	out.IdlePolicy = sb.IdlePolicy
+	out.EnvVars = sb.EnvVars
+	out.Memory = sb.Memory
+	out.MemoryLimit = sb.MemoryLimit
+	out.CPU = sb.CPU
+	out.CPULimit = sb.CPULimit
+	out.App = sb.App
+	out.Image = sb.Image
+	out.User = sb.User
+	out.Port = sb.Port
+	out.Workdir = sb.Workdir
+	out.Metadata = sb.Metadata
+	return out
 }
 
 type SandboxKube struct {
@@ -221,51 +274,3 @@ type SandboxKube struct {
 	RawData   string
 	Namespace string
 }
-
-const defaultSandboxTemplate = `apiVersion: apps/v1
-kind: ReplicaSet
-metadata:
-  name: {{.Sandbox.Name}}
-  namespace: {{.Namespace}}
-  annotations:
-    sandbox-data:  |
-        {{.RawData}}
-  labels:
-    sandbox: "{{.Sandbox.Name}}"
-    owner: agent-sandbox
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      sandbox: "{{.Sandbox.Name}}"
-  template:
-    metadata:
-      labels:
-        sandbox: "{{.Sandbox.Name}}"
-        owner: agent-sandbox
-    spec:
-      containers:
-      - name: sandbox
-        image: {{.Sandbox.Image}}
-        imagePullPolicy: IfNotPresent
-        env:
-        - name: INSTANCE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        resources:
-          requests:
-            cpu: {{.Sandbox.CPU}}
-            memory: {{.Sandbox.Memory}}
-          limits:
-            cpu: {{.Sandbox.CPULimit}}
-            memory: {{.Sandbox.MemoryLimit}}
-        startupProbe:
-            failureThreshold: 600
-            tcpSocket:
-              port: {{.Sandbox.Port}}
-            periodSeconds: 1
-            successThreshold: 1
-            timeoutSeconds: 3
-
-`

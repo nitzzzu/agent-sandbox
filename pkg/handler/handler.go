@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/activator"
 	e2bapi "github.com/agent-sandbox/agent-sandbox/pkg/api/e2b"
@@ -53,10 +52,8 @@ func New(rootCtx context.Context, a *activator.Activator, c *sandbox.Controller)
 	//loggedMux := mux
 
 	server := &http.Server{
-		Addr:         config.Cfg.ServerAddr,
-		Handler:      loggedMux,
-		ReadTimeout:  5 * time.Minute,
-		WriteTimeout: 30 * time.Second,
+		Addr:    config.Cfg.ServerAddr,
+		Handler: loggedMux,
 	}
 
 	klog.Info("Api server ", "addr=", config.Cfg.ServerAddr)
