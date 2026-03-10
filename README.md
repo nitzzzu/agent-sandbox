@@ -271,8 +271,7 @@ print(response.text)
 }
 ```
 
-# QA
-![webchat](docs/wechat.png)
+
 
 # License
 
