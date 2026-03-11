@@ -17,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/injection"
 	"knative.dev/pkg/version"
@@ -72,7 +71,7 @@ func main() {
 
 	pl := sandbox.NewPoolManager(rootCtx)
 	a := activator.NewActivator(rootCtx)
-	c := sandbox.NewController(rootCtx, pl)
+	c := sandbox.NewController(rootCtx, kubecfg, pl)
 
 	// Start the autoscaler
 	go func() {
@@ -86,6 +85,12 @@ func main() {
 		klog.Info("Starting pool syncer")
 		pl.StartPoolSyncing()
 	}()
+
+	// TODO Set up our config store
+	//configMapWatcher := configmapinformer.NewInformedWatcher(kubeClient, config.Cfg.SandboxNamespace)
+	//logger := &zap.SugaredLogger{}
+	//configStore := config.NewStore(logger)
+	//configStore.WatchConfigs(configMapWatcher)
 
 	klog.Info("Starting the api server")
 	apiServer := handler.New(rootCtx, a, c)

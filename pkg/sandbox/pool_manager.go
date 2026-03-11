@@ -21,7 +21,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
+
+	rsclient "knative.dev/pkg/client/injection/kube/informers/apps/v1/replicaset"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	v1 "k8s.io/api/apps/v1"
@@ -50,11 +53,11 @@ func NewPoolManager(ctx context.Context) *PoolManager {
 // AcquirePoolReplicaSet tries to acquire a pool replicaset for use
 // It marks the pool replicaset as in-use and updates its metadata with actual sandbox data
 // Returns error if concurrent update conflict occurs (optimistic locking)
-func (pm *PoolManager) AcquirePoolReplicaSet(sb *Sandbox) (*v1.ReplicaSet, error) {
+func (pm *PoolManager) AcquirePoolReplicaSet(sb *Sandbox) (*v1.ReplicaSet, bool, error) {
 	// Try to find an available pool replicaset
 	available, err := pm.listAvailablePoolReplicaSets(sb.TemplateObj)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list available pool replicasets  %v", err)
+		return nil, false, fmt.Errorf("failed to list available pool replicasets  %v", err)
 	}
 
 	// If none available, create and return
@@ -63,9 +66,9 @@ func (pm *PoolManager) AcquirePoolReplicaSet(sb *Sandbox) (*v1.ReplicaSet, error
 		//  create, if pool size is 0
 		createdRS, err = pm.createReplicaSet(sb)
 		if err != nil || createdRS == nil {
-			return nil, fmt.Errorf("failed to create available pool replicasets %v", err)
+			return nil, false, fmt.Errorf("failed to create available pool replicasets %v", err)
 		}
-		return createdRS, nil
+		return createdRS, false, nil
 	}
 
 	// available pool replicasets exist, random select one
@@ -79,10 +82,10 @@ func (pm *PoolManager) AcquirePoolReplicaSet(sb *Sandbox) (*v1.ReplicaSet, error
 	acquiredRS, err := pm.adaptReplicasetToSandbox(poolRS, sb)
 	if err != nil {
 		klog.Warningf("failed to acquire pool replicaset %s: %v", poolRS.Name, err)
-		return nil, fmt.Errorf("failed to acquire any pool replicaset: %v", err)
+		return nil, false, fmt.Errorf("failed to acquire any pool replicaset: %v", err)
 	}
 
-	return acquiredRS, nil
+	return acquiredRS, true, nil
 }
 
 // ListAvailablePoolReplicaSets lists available pool replicasets for a given template
@@ -93,9 +96,7 @@ func (pm *PoolManager) listAvailablePoolReplicaSets(template *config.Template) (
 		TPLLabel:  template.Name,
 	}.AsSelector()
 
-	rsList, err := pm.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).List(context.TODO(), v1meta.ListOptions{
-		LabelSelector: selector.String(),
-	})
+	rsList, err := rsclient.Get(pm.rootCtx).Lister().List(selector)
 
 	//TODO retry with times
 	if err != nil {
@@ -104,12 +105,13 @@ func (pm *PoolManager) listAvailablePoolReplicaSets(template *config.Template) (
 	}
 
 	result := []*v1.ReplicaSet{}
-	for i := range rsList.Items {
-		rs := &rsList.Items[i]
+	for i := range rsList {
+		rs := rsList[i]
 		rsImg := rs.Spec.Template.Spec.Containers[0].Image
 
 		// check image is same as template, in case some pool replicaset is created with old template image when template is updated
 		// if not same, delete it and skip
+		//TODO check rs pods is ready?
 		if rsImg != template.Image {
 			klog.Warningf("deleting pool replicaset %s with outdated image %s for template %s", rs.Name, rsImg, template.Name)
 			err := pm.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Delete(context.TODO(), rs.Name, v1meta.DeleteOptions{})
@@ -160,7 +162,7 @@ func (pm *PoolManager) adaptReplicasetToSandbox(rs *v1.ReplicaSet, sb *Sandbox) 
 		return nil, fmt.Errorf("failed to update pool replicaset %s: %v", rs.Name, err)
 	}
 
-	klog.V(2).Infof("acquired pool replicaset %s for sandbox %s", rs.Name, sb.Name)
+	klog.V(2).Infof("adapted pool replicaset %s for sandbox %s", rs.Name, sb.Name)
 	return rsCopy, nil
 }
 
@@ -255,6 +257,14 @@ func (pm *PoolManager) replenishPoolAsync() {
 			sb := GetDefaultSandbox()
 			sb.Template = tpl.Name
 			sb.IsPool = true
+			if tpl.Pool.WarmupCmd != "" {
+				// "tail, -f /dev/null"
+				cmds := strings.Split(tpl.Pool.WarmupCmd, ",")
+				sb.Cmd = cmds[0]
+				if len(cmds) > 1 {
+					sb.Args = strings.Split(cmds[1], " ")
+				}
+			}
 			sb.User = "sys-2492a85b10ed4cb083b2c76b181eac96"
 
 			// init name and valid fields

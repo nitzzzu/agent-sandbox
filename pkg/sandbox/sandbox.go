@@ -82,11 +82,17 @@ type Sandbox struct {
 
 	TemplateObj *config.Template `json:"-"`
 
+	// Set the CMD of the SandboxHandler, overriding any CMD of the container image.
+	Cmd string `json:"-"`
+
+	Args []string `json:"-"`
+
+	// ------------
+	// for input params, used for create sandbox
+	// ------------
+
 	// Optionally give the sandbox a unique id.  compatible with E2B API
 	ID string `json:"id,omitempty" required:"false" jsonschema:"The unique id of Sandbox."`
-
-	// Set the CMD of the SandboxHandler, overriding any CMD of the container image.
-	Args []string `json:"args,omitempty"`
 
 	// Associate the sandbox with an app. Required unless creating from a container.
 	App string `json:"app,omitempty" jsonschema:"App to for associate the sandbox with an app"`

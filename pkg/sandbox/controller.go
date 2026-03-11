@@ -21,33 +21,37 @@ import (
 	"fmt"
 	"sort"
 
+	"context"
+
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
+	"github.com/agent-sandbox/agent-sandbox/pkg/utils"
 	v1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	rsclient "knative.dev/pkg/client/injection/kube/informers/apps/v1/replicaset"
 	podclient "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
 
-	"context"
-
 	v1core "k8s.io/api/core/v1"
 	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type Controller struct {
-	client  kubernetes.Interface
+	kclient kubernetes.Interface
+	kcfg    *rest.Config
 	rootCtx context.Context
 	pl      *PoolManager
 }
 
-func NewController(ctx context.Context, pl *PoolManager) *Controller {
+func NewController(ctx context.Context, cfg *rest.Config, pl *PoolManager) *Controller {
 	c := kubeclient.Get(ctx)
 	sh := &Controller{
 		rootCtx: ctx,
-		client:  c,
+		kclient: c,
+		kcfg:    cfg,
 		pl:      pl,
 	}
 	return sh
@@ -76,12 +80,17 @@ func (s *Controller) GetByID(id string) (*Sandbox, error) {
 }
 
 func (s *Controller) Get(name string) (*Sandbox, error) {
-	rs, err := rsclient.Get(s.rootCtx).Lister().ReplicaSets(config.Cfg.SandboxNamespace).Get(name)
+	selector, _ := labels.Parse(fmt.Sprintf("sandbox=%s", name))
+	rss, err := rsclient.Get(s.rootCtx).Lister().ReplicaSets(config.Cfg.SandboxNamespace).List(selector)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.GetSandbox(rs)
+	if len(rss) == 0 {
+		return nil, fmt.Errorf("no Sandbox found with name %s", name)
+	}
+
+	return s.GetSandbox(rss[0])
 }
 
 func (s *Controller) GetSandbox(rs *v1.ReplicaSet) (*Sandbox, error) {
@@ -152,9 +161,10 @@ func (s *Controller) Create(sb *Sandbox) (*Sandbox, error) {
 	// retry to AcquirePoolReplicaSet if error is conflict,
 	//because multiple sandboxes may try to acquire the same pool replicaset
 	acquired := &v1.ReplicaSet{}
+	fromPool := false
 	err := retry.OnError(retry.DefaultRetry, IsAcquireError, func() error {
 		var err error
-		acquired, err = s.pl.AcquirePoolReplicaSet(sb)
+		acquired, fromPool, err = s.pl.AcquirePoolReplicaSet(sb)
 		return err
 	})
 
@@ -166,9 +176,16 @@ func (s *Controller) Create(sb *Sandbox) (*Sandbox, error) {
 	sb.Object = acquired
 
 	// Wait for ReplicaSet to be ready
-	if perr := s.WaitForReplicaSetReady(sb.Name); perr != nil {
-		klog.Errorf("timeout waiting for sandbox to be ready: %v, instance not ready yet, please get it leater or check pod status", perr)
-		return sb, nil
+	if fromPool && sb.TemplateObj.Pool.StartupCmd != "" {
+		if perr := s.StartupAndWaitForPoolReplicaSetReady(sb, false); perr != nil {
+			klog.Errorf("timeout waiting for sandbox from pool to be ready: %v, instance not ready yet, please get it leater or check pod status", perr)
+			return sb, nil
+		}
+	} else {
+		if perr := s.WaitForReplicaSetReady(sb); perr != nil {
+			klog.Errorf("timeout waiting for sandbox to be ready: %v, instance not ready yet, please get it leater or check pod status", perr)
+			return sb, nil
+		}
 	}
 
 	sb.Status = Running
@@ -193,7 +210,24 @@ func (s *Controller) DeleteByID(id string) error {
 }
 
 func (s *Controller) Delete(name string) error {
-	err := s.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Delete(context.TODO(), name, v1meta.DeleteOptions{})
-	return err
-	//return nil
+	selector, _ := labels.Parse(fmt.Sprintf("sandbox=%s", name))
+	// delete rs by selector, since rs name may be different when acquire from pool
+	rss, err := rsclient.Get(s.rootCtx).Lister().ReplicaSets(config.Cfg.SandboxNamespace).List(selector)
+	if err != nil {
+		return err
+	}
+	for _, rs := range rss {
+		err = s.kclient.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Delete(context.TODO(), rs.Name, v1meta.DeleteOptions{})
+		if err != nil {
+			klog.Errorf("failed to delete replicaset %s: %v", rs.Name, err)
+			return err
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (s *Controller) ExecCommandInPod(name string, cmd []string) (output string, outputErr string, err error) {
+	return utils.ExecCommand(s.kclient, s.kcfg, config.Cfg.SandboxNamespace, name, "sandbox", cmd)
 }

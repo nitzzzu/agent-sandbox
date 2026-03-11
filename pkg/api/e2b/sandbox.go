@@ -301,7 +301,7 @@ func (a *Handler) convertToE2BSandbox(sb *sandbox.Sandbox) *api.Sandbox {
 
 	apiSbx.Metadata["name"] = sb.Name
 
-	rs := utils.CalculateResourceToQuantity(sb)
+	rs := utils.CalculateResourceToQuantity(sb.CPU, sb.Memory)
 	apiSbx.CpuCount = rs.CPUMilli
 	apiSbx.MemoryMB = rs.MemoryMB
 	apiSbx.DiskSizeMB = rs.DiskSizeMB

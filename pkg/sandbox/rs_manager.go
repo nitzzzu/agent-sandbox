@@ -25,6 +25,10 @@ import (
 	"context"
 	"text/template"
 
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	podclient "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
@@ -88,13 +92,21 @@ func buildReplicaSet(sb *Sandbox) (*v1.ReplicaSet, error) {
 	rsObj.Spec.Template.SetAnnotations(podAnns)
 	rsObj.Spec.Template.SetLabels(podLbs)
 
+	// set startupProbe port to pool probe port if is pool rs
+	if sb.IsPool {
+		container := rsObj.Spec.Template.Spec.Containers[0]
+		if container.StartupProbe != nil {
+			container.StartupProbe.TCPSocket.Port = intstr.FromInt(sb.TemplateObj.Pool.ProbePort)
+		}
+	}
+
 	return rsObj, nil
 }
 
 // WaitForReplicaSetReady waits for a ReplicaSet to become ready
-func (s *Controller) WaitForReplicaSetReady(name string) error {
+func (s *Controller) WaitForReplicaSetReady(sb *Sandbox) error {
 	return wait.PollUntilContextTimeout(context.TODO(), 500*time.Millisecond, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
-		rsCreated, err := s.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Get(context.TODO(), name, v1meta.GetOptions{})
+		rsCreated, err := s.kclient.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Get(context.TODO(), sb.Name, v1meta.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -102,12 +114,60 @@ func (s *Controller) WaitForReplicaSetReady(name string) error {
 		replicas := *rsCreated.Spec.Replicas
 		if replicas == rsCreated.Status.ReadyReplicas {
 			klog.Infof("ReplicaSet %s in namespace %s is ready. Desired: %d, Ready: %d",
-				name, config.Cfg.SandboxNamespace, replicas, rsCreated.Status.ReadyReplicas)
+				sb.Name, config.Cfg.SandboxNamespace, replicas, rsCreated.Status.ReadyReplicas)
 			return true, nil
 		} else {
 			klog.V(2).Infof("ReplicaSet %s in namespace %s is NOT ready. Desired: %d, Ready: %d\n",
-				name, config.Cfg.SandboxNamespace, replicas, rsCreated.Status.ReadyReplicas)
+				sb.Name, config.Cfg.SandboxNamespace, replicas, rsCreated.Status.ReadyReplicas)
 			return false, nil
 		}
+	})
+}
+
+// StartupAndWaitForPoolReplicaSetReady waits for a ReplicaSet to become ready by executing a command in the pod and checking the port is listening
+func (s *Controller) StartupAndWaitForPoolReplicaSetReady(sb *Sandbox, checkReady bool) error {
+	selector := labels.Set{
+		"sandbox": sb.Name,
+	}.AsSelector()
+	podList, err := podclient.Get(s.rootCtx).Lister().Pods(config.Cfg.SandboxNamespace).List(selector)
+
+	if err != nil {
+		return err
+	}
+	if len(podList) == 0 {
+		return fmt.Errorf("pod list is empty, name: %s", sb.Name)
+	}
+	pod := podList[0]
+
+	// 1, start up services, services should be listening port that config in template !
+	cmd := []string{
+		"sh",
+		"-c",
+		sb.TemplateObj.Pool.StartupCmd,
+	}
+	klog.Infof("execute startup command in pod %s: %s", pod.Name, sb.TemplateObj.Pool.StartupCmd)
+	_, _, err = s.ExecCommandInPod(pod.Name, cmd)
+	if err != nil {
+		return err
+	}
+
+	if !checkReady {
+		return nil
+	}
+
+	// 2. use curl port to check if the port is listening when services is started
+	klog.Infof("check if port %d is listening in pod %s", sb.Port, pod.Name)
+	return wait.PollUntilContextTimeout(context.TODO(), 300*time.Millisecond, 1*time.Minute, true, func(ctx context.Context) (bool, error) {
+		cmd := []string{
+			"sh",
+			"-c",
+			fmt.Sprintf("curl -s -o /dev/null  http://127.0.0.1:%d", sb.Port),
+		}
+		_, _, err = s.ExecCommandInPod(pod.Name, cmd)
+		if err != nil {
+			klog.Infof("port %d is not listening in pod %s, retry...", sb.Port, pod.Name)
+			return false, nil
+		}
+		return true, nil
 	})
 }

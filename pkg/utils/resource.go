@@ -17,7 +17,6 @@
 package utils
 
 import (
-	"github.com/agent-sandbox/agent-sandbox/pkg/sandbox"
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 )
@@ -28,14 +27,14 @@ type ResourceQuantity struct {
 	DiskSizeMB int64
 }
 
-func CalculateResourceToQuantity(sb *sandbox.Sandbox) ResourceQuantity {
-	cpu, err := resource.ParseQuantity(sb.CPU)
+func CalculateResourceToQuantity(cpucfg string, memcfg string) ResourceQuantity {
+	cpu, err := resource.ParseQuantity(cpucfg)
 	if err != nil {
 		klog.Errorf("failed to parse CPU quantity: %v", err)
 		cpu = resource.MustParse("0")
 	}
 
-	mem, err := resource.ParseQuantity(sb.Memory)
+	mem, err := resource.ParseQuantity(memcfg)
 	if err != nil {
 		klog.Errorf("failed to parse Memory quantity: %v", err)
 		mem = resource.MustParse("0")

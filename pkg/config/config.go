@@ -28,17 +28,21 @@ import (
 )
 
 type TemplatePool struct {
-	Size int `json:"size"`
+	Size       int    `json:"size"`
+	ProbePort  int    `json:"probePort"`
+	WarmupCmd  string `json:"warmupCmd"`
+	StartupCmd string `json:"startupCmd"`
 }
 
 type Template struct {
-	Name        string       `json:"name" required:"false"`
-	Pattern     string       `json:"pattern" required:"false"`
-	Image       string       `json:"image" required:"false"`
-	Port        int          `json:"port" required:"false"`
-	Type        string       `json:"type" required:"false" description:"dynamic or static, default is static, dynamic means template is dynamic by regexp"`
-	Pool        TemplatePool `json:"pool" required:"false"`
-	Description string       `json:"description" required:"false"`
+	Name           string       `json:"name" required:"false"`
+	Pattern        string       `json:"pattern" required:"false"`
+	Image          string       `json:"image" required:"false"`
+	Port           int          `json:"port" required:"false"`
+	Type           string       `json:"type" required:"false" description:"dynamic or static, default is static, dynamic means template is dynamic by regexp"`
+	NoStartupProbe bool         `json:"noStartupProbe" required:"false"`
+	Pool           TemplatePool `json:"pool" required:"false"`
+	Description    string       `json:"description" required:"false"`
 }
 
 var Cfg *Config
@@ -110,9 +114,9 @@ func LoadTemplates() {
 }
 
 func GetTemplateByName(name string) (*Template, error) {
-	for _, env := range Templates {
-		if env.Name == name {
-			return env, nil
+	for _, t := range Templates {
+		if t.Name == name {
+			return t, nil
 		}
 	}
 
@@ -140,13 +144,14 @@ func GetTemplateByName(name string) (*Template, error) {
 			}
 
 			dynT := &Template{
-				Name:        name,
-				Image:       image,
-				Port:        t.Port,
-				Pattern:     t.Pattern,
-				Pool:        t.Pool,
-				Type:        t.Type,
-				Description: t.Description,
+				Name:           t.Name,
+				Image:          image,
+				Port:           t.Port,
+				Pattern:        t.Pattern,
+				Pool:           t.Pool,
+				Type:           t.Type,
+				NoStartupProbe: t.NoStartupProbe,
+				Description:    t.Description,
 			}
 			return dynT, nil
 		}
