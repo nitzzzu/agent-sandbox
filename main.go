@@ -58,7 +58,7 @@ func main() {
 	//load template for sandbox deployment and pool replicaSet
 	cfg.KubeClient = kubeClient
 	cfg.LoadSandboxRSTemplate()
-	//cfg.LoadTemplates(), watcher will call it on start
+	cfg.CheckConfigmap()
 	// watch configmap for dynamic update
 	configMapWatcher := configmapinformer.NewInformedWatcher(kubeClient, cfg.SandboxNamespace)
 	configMapWatcher.Watch(config.TemplatesConfigMapName, config.WatchConfigMap())

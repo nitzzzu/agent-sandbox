@@ -92,40 +92,46 @@ func (c *Config) LoadSandboxRSTemplate() {
 	SandboxDeployTemplate = string(val)
 }
 
+func (c *Config) CheckConfigmap() {
+	cmcontent, err := c.ReadTemplatesFromCM()
+	if cmcontent != "" {
+		klog.Info("templates config already exists in configmap")
+		return
+	}
+
+	klog.Info("templates config is empty, will load from local file system")
+
+	//load templates config, read file from cfg.SandboxTemplatesConfigFile by os.ReadFile
+	fileName := c.SandboxTemplatesConfigFile
+	content, err := os.ReadFile(fileName)
+	if err != nil {
+		klog.Fatalf("Failed to read Template config file %s error: %v", fileName, err)
+	}
+
+	templatesContent := string(content)
+
+	klog.Infof("Loaded Template config from file %s, content is %s", fileName, templatesContent)
+
+	// store templates config to configmap
+	err = c.SaveTemplatesToCM(templatesContent)
+	if err != nil {
+		klog.Fatalf("Failed to save Templates config to configmap, error: %v, config content %v", err, templatesContent)
+	} else {
+		klog.Info("Templates config saved to configmap successfully")
+	}
+}
+
 // LoadTemplates load templates config from:
-//1, check configmap first, if not exist, then load from local file system and sore to configmap,
-//2, if configmap exist,  load from configmap
-//3, configmap is first priority.
 func (c *Config) LoadTemplates() {
 	templatesContent := ""
-	isLoadFromFile := false
 
-	// load config from configmap first
+	// load config from configmap
 	content, err := c.ReadTemplatesFromCM()
-	if err != nil {
-		klog.Errorf("Failed to read Templates config from configmap, error: %v", err)
-	} else {
-		klog.Info("Loaded Templates config from configmap: ", content)
-		templatesContent = content
+	if content == "" {
+		klog.Fatalf("Failed to read Templates config from configmap, content is empty, error: %v", err)
 	}
-
-	if templatesContent == "" {
-		klog.Info("templates config is empty, will load from local file system")
-
-		//load templates config, read file from cfg.SandboxTemplatesConfigFile by os.ReadFile
-		fileName := c.SandboxTemplatesConfigFile
-		klog.Infof("Loading Template config from file %s", fileName)
-
-		content, err := os.ReadFile(fileName)
-		if err != nil {
-			klog.Fatalf("Failed to read Template config file %s error: %v", fileName, err)
-		}
-
-		templatesContent = string(content)
-		isLoadFromFile = true
-
-		klog.Infof("Loaded Template config from file %s, content is %s", fileName, templatesContent)
-	}
+	klog.Info("Loaded Templates config from configmap: ", content)
+	templatesContent = content
 
 	var tpls []*Template
 	err = json.Unmarshal([]byte(templatesContent), &tpls)
@@ -142,16 +148,6 @@ func (c *Config) LoadTemplates() {
 	for _, env := range tpls {
 		if env.Name == "" || env.Image == "" || env.Description == "" {
 			klog.Fatalf("Invalid Template config in templatesContent %s: %+v, name image and desc must not dempty", templatesContent, env)
-		}
-	}
-
-	if isLoadFromFile {
-		// store templates config to configmap
-		err := c.SaveTemplatesToCM(templatesContent)
-		if err != nil {
-			klog.Errorf("Failed to save Templates config to configmap, error: %v, config content %v", err, templatesContent)
-		} else {
-			klog.Info("Templates config saved to configmap successfully")
 		}
 	}
 
