@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	configmapinformer "knative.dev/pkg/configmap/informer"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/injection"
 	"knative.dev/pkg/version"
@@ -27,6 +28,9 @@ import (
 func main() {
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	//init config for global
+	cfg := config.InitConfig()
 
 	var fs flag.FlagSet
 	klog.InitFlags(&fs)
@@ -50,6 +54,17 @@ func main() {
 	rootCtx, informers := injection.Default.SetupInformers(rootCtx, kubecfg)
 
 	kubeClient := kubeclient.Get(rootCtx)
+
+	//load template for sandbox deployment and pool replicaSet
+	cfg.KubeClient = kubeClient
+	cfg.LoadSandboxRSTemplate()
+	//cfg.LoadTemplates(), watcher will call it on start
+	// watch configmap for dynamic update
+	configMapWatcher := configmapinformer.NewInformedWatcher(kubeClient, cfg.SandboxNamespace)
+	configMapWatcher.Watch(config.TemplatesConfigMapName, config.WatchConfigMap())
+	if err := configMapWatcher.Start(rootCtx.Done()); err != nil {
+		klog.Fatal("Failed to start configuration manager", zap.Error(err))
+	}
 
 	// check k8s version is matched
 	// We sometimes start up faster than we can reach kube-api. Poll on failure to prevent us terminating
@@ -85,12 +100,6 @@ func main() {
 		klog.Info("Starting pool syncer")
 		pl.StartPoolSyncing()
 	}()
-
-	// TODO Set up our config store
-	//configMapWatcher := configmapinformer.NewInformedWatcher(kubeClient, config.Cfg.SandboxNamespace)
-	//logger := &zap.SugaredLogger{}
-	//configStore := config.NewStore(logger)
-	//configStore.WatchConfigs(configMapWatcher)
 
 	klog.Info("Starting the api server")
 	apiServer := handler.New(rootCtx, a, c)

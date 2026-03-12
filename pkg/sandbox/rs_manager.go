@@ -47,7 +47,7 @@ func buildReplicaSet(sb *Sandbox) (*v1.ReplicaSet, error) {
 		RawData:   string(raw),
 		Namespace: config.Cfg.SandboxNamespace,
 	}
-	tmpl, err := template.New(sb.Name).Parse(SandboxDeployTemplate)
+	tmpl, err := template.New(sb.Name).Parse(config.SandboxDeployTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("parse template fail: %v", err)
 	}

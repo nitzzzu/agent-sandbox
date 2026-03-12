@@ -18,7 +18,6 @@ package sandbox
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -29,17 +28,6 @@ import (
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 )
-
-var SandboxDeployTemplate string
-
-func init() {
-	var err error
-	var val []byte
-	if val, err = os.ReadFile(config.Cfg.SandboxTemplateFile); err != nil {
-		panic(err)
-	}
-	SandboxDeployTemplate = string(val)
-}
 
 // Defines values for SandboxState.
 type SandboxState string
