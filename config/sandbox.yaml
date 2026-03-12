@@ -7,23 +7,32 @@ metadata:
     sandbox-data:  |
       {{.RawData}}
   labels:
-    sandbox: "{{.Sandbox.Name}}"
+    sandbox: {{.Sandbox.Name}}
     owner: agent-sandbox
 spec:
   replicas: 1
   selector:
     matchLabels:
-      sandbox: "{{.Sandbox.Name}}"
+      sandbox: {{.Sandbox.Name}}
   template:
     metadata:
       labels:
-        sandbox: "{{.Sandbox.Name}}"
+        sandbox: {{.Sandbox.Name}}
         owner: agent-sandbox
     spec:
       containers:
         - name: sandbox
           image: {{.Sandbox.Image}}
           imagePullPolicy: IfNotPresent
+  {{if .Sandbox.Cmd}}
+          command: [{{.Sandbox.Cmd}}]
+  {{end}}
+  {{if .Sandbox.Args}}
+          args:
+      {{range .Sandbox.Args }}
+            - {{ . }}
+      {{end }}
+  {{end}}
           ports:
             - containerPort: {{.Sandbox.Port}}
           env:
@@ -38,6 +47,7 @@ spec:
             limits:
               cpu: {{.Sandbox.CPULimit}}
               memory: {{.Sandbox.MemoryLimit}}
+  {{if not .Sandbox.TemplateObj.NoStartupProbe}}
           startupProbe:
             failureThreshold: 600
             tcpSocket:
@@ -45,3 +55,4 @@ spec:
             periodSeconds: 1
             successThreshold: 1
             timeoutSeconds: 3
+  {{end}}

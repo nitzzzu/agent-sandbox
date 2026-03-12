@@ -11,10 +11,13 @@
   },
   {
     "name": "code-interpreter",
-    "image": "ghcr.io/agent-sandbox/code-interpreter:0.2.0",
+    "image": "ghcr.io/agent-sandbox/code-interpreter:0.3.0",
     "port": 49999,
     "pool": {
-      "size": 0
+      "size": 0,
+      "probePort": 8888,
+      "warmupCmd": "/root/.server/warmup.sh",
+      "startupCmd": "/root/.server/startup.sh"
     },
     "description": "providing a code interpreter environment, E2B featured."
   },
