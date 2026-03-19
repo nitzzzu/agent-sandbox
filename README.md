@@ -15,15 +15,27 @@ Shell commands etc. with stateful, long-running, multi-session and multi-tenant.
 
 <div align="center">
 <h3>Agent-Sandbox UI</h3> 
-<span>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal access Tools for Sandbox etc.</span>
-<picture >
-  <img alt="agent-sandbox" src="docs/imgs/uiimg-sbs.png" width="45%"/>
-  <img alt="agent-sandbox" src="docs/imgs/uiimg-pools.jpg" width="45%"/>
-  <img alt="agent-sandbox" src="docs/imgs/uiimg-files.jpg" width="45%"/>
-  <img alt="agent-sandbox" src="docs/imgs/uiimg-logs.jpg" width="45%"/>
-  <img alt="agent-sandbox" src="docs/imgs/uiimg-terminal.png" width="45%"/>
-  <img alt="agent-sandbox" src="docs/imgs/uiimg-tpl.jpg" width="45%"/>
-</picture>
+<div>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal access Tools for Sandbox etc.</div>
+<div>   
+<a href="docs/imgs/uiimg-sbs.png" target="_blank">
+    <img alt="agent-sandbox" src="docs/imgs/uiimg-sbs.png" width="45%"/>
+</a>
+<a href="docs/imgs/uiimg-pools.jpg" target="_blank">
+    <img alt="agent-sandbox" src="docs/imgs/uiimg-pools.jpg" width="45%"/>
+</a>
+<a href="docs/imgs/uiimg-files.jpg" target="_blank">
+    <img alt="agent-sandbox" src="docs/imgs/uiimg-files.jpg" width="45%"/>
+</a>
+<a href="docs/imgs/uiimg-logs.jpg" target="_blank">
+    <img alt="agent-sandbox" src="docs/imgs/uiimg-logs.jpg" width="45%"/>
+</a>
+<a href="docs/imgs/uiimg-terminal.png" target="_blank">
+    <img alt="agent-sandbox" src="docs/imgs/uiimg-terminal.png" width="45%"/>
+</a>
+<a href="docs/imgs/uiimg-tpl.jpg" target="_blank">
+    <img alt="agent-sandbox" src="docs/imgs/uiimg-tpl.jpg" width="45%"/>
+</a>
+</div>
 </div>
 
 <div align="center">
