@@ -15,8 +15,8 @@ Shell commands etc. with stateful, long-running, multi-session and multi-tenant.
 
 <div align="center">
 <h3>Agent-Sandbox UI</h3> 
-<div>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal access Tools for Sandbox etc. <br> ui path is <a href="https://agent-sandbox.domain.com/ui">https://agent-sandbox.domain.com/ui</a></div>
-<div>   
+<div>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal access Tools for Sandbox etc. <br> ui path is <a href="https://agent-sandbox.domain.com/ui">https://agent-sandbox.domain.com/ui</a>
+</div>
 <div>   
 <a href="docs/imgs/uiimg-sbs.png" target="_blank">
     <img alt="agent-sandbox" src="docs/imgs/uiimg-sbs.png" width="45%"/>
@@ -103,7 +103,7 @@ flowchart TD
 # Quick Start
 
 ## 1, Installation
-You can install Agent-Sandbox by applying the provided [install.yaml](https://github.com/agent-sandbox/agent-sandbox/blob/main/install.yaml) file to your Kubernetes cluster.  
+You can install Agent-Sandbox by applying the provided [install.yaml](https://github.com/agent-sandbox/agent-sandbox/blob/main/install.yaml) file to your Kubernetes cluster.
 
 requires **Kubernetes version 1.26** or higher.
 ```bash
@@ -297,8 +297,6 @@ print(response.text)
 }
 ```
 
-# QA
-![webchat](docs/wechat.png)
 
 # License
 
