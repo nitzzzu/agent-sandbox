@@ -17,16 +17,21 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/agent-sandbox/agent-sandbox/pkg/api/e2b"
+	"github.com/agent-sandbox/agent-sandbox/pkg/auth"
+	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	"k8s.io/klog/v2"
 )
 
 // LoggingMiddleware logs the request details and execution time
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		//skip healthz logging
 		if r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
 			return
@@ -34,12 +39,45 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		start := time.Now()
 
-		// Code to execute BEFORE the actual handler
 		klog.V(1).Infof("Started request: %s %s%s, request headers %v", r.Method, r.Host, r.URL, r.Header)
 
-		// Call the next handler in the chain
 		next.ServeHTTP(w, r)
 
 		klog.V(1).Infof("Finished request: %s %s%s, Time taken: %v, response header: %v", r.Method, r.Host, r.URL, time.Since(start), w.Header())
+	})
+}
+
+func ApiKeyAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !shouldProtectAPIRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		token, ok := auth.ValidateRequestToken(r)
+		if !ok {
+			writeUnauthorized(w)
+			return
+		}
+
+		r = r.WithContext(context.WithValue(r.Context(), "user", token))
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func shouldProtectAPIRequest(r *http.Request) bool {
+	if config.Cfg == nil {
+		return false
+	}
+	return strings.HasPrefix(r.URL.Path, config.Cfg.APIBaseURL+"/") || strings.HasPrefix(r.URL.Path, e2b.BaseURL+"/")
+}
+
+func writeUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(&response{
+		Code:  "401",
+		Error: "Unauthorized",
 	})
 }

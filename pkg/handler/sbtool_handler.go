@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package sandbox
+package handler
 
 import (
 	"context"

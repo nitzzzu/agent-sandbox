@@ -34,6 +34,7 @@ import (
 
 type TemplatePool struct {
 	Size       int    `json:"size"`
+	ReadySize  int    `json:"readySize"`
 	ProbePort  int    `json:"probePort"`
 	WarmupCmd  string `json:"warmupCmd"`
 	StartupCmd string `json:"startupCmd"`
@@ -57,9 +58,11 @@ var SandboxDeployTemplate string
 type Config struct {
 	KubeClient kubernetes.Interface `ignored:"true"`
 
-	APIVersion string `split_words:"true" default:"v1" required:"false"`
-	APIBaseURL string `split_words:"true" default:"" required:"false"`
-	ServerAddr string `split_words:"true" default:"0.0.0.0:10000" required:"false"`
+	APIVersion   string   `split_words:"true" default:"v1" required:"false"`
+	APIBaseURL   string   `split_words:"true" default:"" required:"false"`
+	ServerAddr   string   `split_words:"true" default:"0.0.0.0:10000" required:"false"`
+	APITokensRaw string   `split_words:"true" default:"" required:"false"`
+	APITokens    []string `ignored:"true"`
 
 	// witch Kubernetes namespace to create sandboxes Replicaset&Pod in
 	SandboxNamespace string `split_words:"true" default:"default" required:"false"`
@@ -69,6 +72,8 @@ type Config struct {
 	SandboxTemplatesConfigFile string `split_words:"true" default:"config/templates.json" required:"false"`
 	SandboxDefaultImage        string `split_words:"true" default:"ghcr.io/agent-infra/sandbox:latest" required:"false"`
 	SandboxDefaultTemplate     string `split_words:"true" default:"aio" required:"false"`
+
+	Version string `split_words:"true" default:"0.0.1" required:"false"`
 }
 
 func InitConfig() *Config {
@@ -78,6 +83,19 @@ func InitConfig() *Config {
 	}
 
 	cfg.APIBaseURL = "/api/" + cfg.APIVersion
+
+	cfg.APITokensRaw = "sys-2492a85b10ed4cb083b2c76b181eac96," + cfg.APITokensRaw
+	tokens := strings.Split(cfg.APITokensRaw, ",")
+	//valid tokens
+	var validTokens []string
+	for _, token := range tokens {
+		token = strings.TrimSpace(token)
+		if token != "" && len(token) >= 5 {
+			validTokens = append(validTokens, token)
+		}
+	}
+	cfg.APITokens = validTokens
+
 	Cfg = &cfg
 
 	return Cfg
@@ -160,19 +178,32 @@ func (c *Config) LoadTemplates() {
 }
 
 func (c *Config) SaveTemplatesToCM(templatesContent string) error {
-	var err error
-	// store templates config to configmap
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      TemplatesConfigMapName,
-			Namespace: c.SandboxNamespace,
-		},
-		Data: map[string]string{
-			TemplatesConfigMapKey: templatesContent,
-		},
-	}
-	_, err = c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace).Create(context.TODO(), cm, metav1.CreateOptions{})
+	cmClient := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace)
 
+	existCm, err := cmClient.Get(context.TODO(), TemplatesConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			cm := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      TemplatesConfigMapName,
+					Namespace: c.SandboxNamespace,
+				},
+				Data: map[string]string{
+					TemplatesConfigMapKey: templatesContent,
+				},
+			}
+			_, createErr := cmClient.Create(context.TODO(), cm, metav1.CreateOptions{})
+			return createErr
+		}
+
+		return err
+	}
+
+	if existCm.Data == nil {
+		existCm.Data = map[string]string{}
+	}
+	existCm.Data[TemplatesConfigMapKey] = templatesContent
+	_, err = cmClient.Update(context.TODO(), existCm, metav1.UpdateOptions{})
 	return err
 }
 

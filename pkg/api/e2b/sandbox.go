@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/api/e2b/api"
+	"github.com/agent-sandbox/agent-sandbox/pkg/auth"
 	"github.com/agent-sandbox/agent-sandbox/pkg/sandbox"
 	"github.com/agent-sandbox/agent-sandbox/pkg/utils"
 	"k8s.io/klog/v2"
@@ -52,7 +53,7 @@ func (a *Handler) GetSandbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Handler) ListSandboxes(w http.ResponseWriter, r *http.Request) {
-	user := GetUserFromContext(r.Context())
+	user := auth.GetUserTokenFromContext(r.Context())
 	if user == "" {
 		sendAPIError(w, http.StatusBadRequest, "User not found, api key may be invalid")
 		return
@@ -123,7 +124,7 @@ func (a *Handler) PostSandboxes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Handler) CreateSandbox(ctx context.Context, newSandbox *api.NewSandbox) (*api.Sandbox, *APIError) {
-	user := GetUserFromContext(ctx)
+	user := auth.GetUserTokenFromContext(ctx)
 	if user == "" {
 		return nil, &APIError{
 			ClientMsg: "User not found, api key may be invalid",

@@ -47,9 +47,9 @@ func New(rootCtx context.Context, a *activator.Activator, c *sandbox.Controller)
 	}
 	ah.regHandlers()
 
-	// Wrap mux with global logging middleware
-	loggedMux := LoggingMiddleware(mux)
-	//loggedMux := mux
+	// Wrap mux with api key auth middleware and global logging middleware
+	authMux := ApiKeyAuthMiddleware(mux)
+	loggedMux := LoggingMiddleware(authMux)
 
 	server := &http.Server{
 		Addr:    config.Cfg.ServerAddr,
@@ -65,11 +65,30 @@ func (ahh *ApiHttpHandler) regHandlers() {
 	c := ahh.controller
 
 	// Rest API for Sandbox management
-	sbHeader := sandbox.NewHandler(ahh.rootCtx, c, a)
+	sbHeader := NewHandler(ahh.rootCtx, c, a)
 	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/sandbox", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.CreateSandbox) })
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/sandbox", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ListSandbox) })
 	ahh.mux.HandleFunc(fmt.Sprintf("DELETE %s/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.DelSandbox) })
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.GetSandbox) })
+
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/logs/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.GetSandboxLogs) })
+
+	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/terminal/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ExecuteSandboxTerminal) })
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/terminal/sandbox/{name}/ws", config.Cfg.APIBaseURL), sbHeader.StreamSandboxTerminalWS)
+
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/sandbox/files/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ListSandboxFiles) })
+	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/sandbox/files/{name}/upload", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.UploadSandboxFile) })
+	ahh.mux.HandleFunc(fmt.Sprintf("DELETE %s/sandbox/files/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.DeleteSandboxFile) })
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/sandbox/files/{name}/download", config.Cfg.APIBaseURL), sbHeader.DownloadSandboxFile)
+
+	// Rest API for config
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/config/templates", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.GetTemplatesConfig) })
+	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/config/templates", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.SaveTemplatesConfig) })
+
+	// Rest API for pool management
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/pool", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ListPool) })
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/pool/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ListPoolSandbox) })
+	ahh.mux.HandleFunc(fmt.Sprintf("DELETE %s/pool/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.DeletePoo) })
 
 	// e2b API
 	e2bHeader := e2bapi.NewHandler(ahh.rootCtx, c, a)
@@ -82,9 +101,17 @@ func (ahh *ApiHttpHandler) regHandlers() {
 	ahh.mux.Handle("/mcp", sbHeader.McpSseHandler())
 
 	ahh.mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "OK")
+		// return the json of status and version
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, config.Cfg.Version)
 		return
 	})
+
+	// ui router for static files
+	uiDistFS := http.FileServer(http.Dir("ui/dist"))
+	ahh.mux.Handle("/ui/", http.StripPrefix("/ui/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uiDistFS.ServeHTTP(w, r)
+	})))
 
 	// e2b sandbox execute endpoint
 	ahh.mux.HandleFunc("/sandboxes/router/{sandboxID}/{port}/", e2bHeader.SandboxRouterOfPath())

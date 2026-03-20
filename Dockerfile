@@ -5,6 +5,8 @@ LABEL org.opencontainers.image.source https://github.com/agent-sandbox/agent-san
 COPY ./config/ /config/
 
 COPY ./agent-sandbox /app
+COPY ./ui/dist /ui/dist
+
 RUN chmod +x /app
 
 CMD /app

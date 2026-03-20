@@ -64,52 +64,13 @@ func GetDefaultE2BSandbox() *api.Sandbox {
 
 // RegisterHandlersWithOptions creates http.Handler with additional options
 func (a *Handler) RegisterHandlersWithOptions(mux *http.ServeMux) {
-	mux.HandleFunc(fmt.Sprintf("POST %s/sandboxes", BaseURL), a.withCheckApiKey(a.PostSandboxes))
-	mux.HandleFunc(fmt.Sprintf("GET %s/sandboxes/{sandboxID}", BaseURL), a.withCheckApiKey(a.GetSandbox))
-	mux.HandleFunc(fmt.Sprintf("GET %s/v2/sandboxes", BaseURL), a.withCheckApiKey(a.ListSandboxes))
+	mux.HandleFunc(fmt.Sprintf("POST %s/sandboxes", BaseURL), a.PostSandboxes)
+	mux.HandleFunc(fmt.Sprintf("GET %s/sandboxes/{sandboxID}", BaseURL), a.GetSandbox)
+	mux.HandleFunc(fmt.Sprintf("GET %s/v2/sandboxes", BaseURL), a.ListSandboxes)
 
 	//E2B does not support delete sandbox now, delete API is reserved for call with http api
-	mux.HandleFunc(fmt.Sprintf("DELETE %s/sandboxes/{sandboxID}", BaseURL), a.withCheckApiKey(a.DeleteSandbox))
+	mux.HandleFunc(fmt.Sprintf("DELETE %s/sandboxes/{sandboxID}", BaseURL), a.DeleteSandbox)
 
-	mux.HandleFunc(fmt.Sprintf("POST %s/sandboxes/{sandboxID}/connect", BaseURL), a.withCheckApiKey(a.ConnectSandbox))
+	mux.HandleFunc(fmt.Sprintf("POST %s/sandboxes/{sandboxID}/connect", BaseURL), a.ConnectSandbox)
 
-}
-
-// withCheckApiKey wraps an http.HandlerFunc with CheckApiKey middleware
-func (a *Handler) withCheckApiKey(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, apiErr := a.CheckApiKey(r.Context(), r)
-		if apiErr != nil {
-			sendAPIError(w, apiErr.Code, apiErr.ClientMsg)
-			return
-		}
-		// Update request with the new context
-		r = r.WithContext(ctx)
-		next(w, r)
-	}
-}
-
-func (a *Handler) CheckApiKey(ctx context.Context, r *http.Request) (context.Context, *APIError) {
-	// e.g. e2b-aef134ef-7aa1-945e-9399-7df9a4ad0c3f
-	apiKey := r.Header.Get("X-Api-Key")
-
-	//TODO check api key validity from database or config
-
-	if apiKey == "" {
-		return ctx, &APIError{
-			Code:      http.StatusUnauthorized,
-			ClientMsg: "Missing API Key",
-		}
-	}
-
-	return context.WithValue(ctx, "user", apiKey), nil
-}
-
-func GetUserFromContext(ctx context.Context) string {
-	value := ctx.Value("user")
-	user, ok := value.(string)
-	if !ok {
-		return ""
-	}
-	return user
 }

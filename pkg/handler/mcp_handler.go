@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package sandbox
+package handler
 
 import (
 	"context"
@@ -23,10 +23,13 @@ import (
 	"net/http"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
+	"github.com/agent-sandbox/agent-sandbox/pkg/sandbox"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"k8s.io/klog/v2"
 )
+
+// Deprecated, recommend to use skills instead.
 
 func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 	server := mcp.NewServer(&mcp.Implementation{
@@ -98,11 +101,11 @@ func (a *Handler) McpSseHandler() *mcp.StreamableHTTPHandler {
 	return handler
 }
 
-func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
-	sb := GetDefaultSandbox() // TODO get user from auth
+func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolRequest, input *sandbox.SandboxBase) (*mcp.CallToolResult, any, error) {
+	sb := sandbox.GetDefaultSandbox() // TODO get user from auth
 	sb.User = "default-mcp-user"
 
-	sb.SandboxBase = *sandbox
+	sb.SandboxBase = *input
 
 	klog.V(2).Infof("Create sandbox opts %v", sb)
 
@@ -136,7 +139,7 @@ func (a *Handler) CreateSandboxTool(ctx context.Context, req *mcp.CallToolReques
 	}, nil, nil
 }
 
-func (a *Handler) ListSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
+func (a *Handler) ListSandboxTool(ctx context.Context, req *mcp.CallToolRequest, input *sandbox.SandboxBase) (*mcp.CallToolResult, any, error) {
 	user := "default-mcp-user" // TODO get user from auth
 	sbs, err := a.controller.List(user)
 	if sbs != nil {
@@ -155,24 +158,24 @@ func (a *Handler) ListSandboxTool(ctx context.Context, req *mcp.CallToolRequest,
 	}, nil, nil
 }
 
-func (a *Handler) GetSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
-	if sandbox.Name == "" {
+func (a *Handler) GetSandboxTool(ctx context.Context, req *mcp.CallToolRequest, input *sandbox.SandboxBase) (*mcp.CallToolResult, any, error) {
+	if input.Name == "" {
 		return nil, nil, fmt.Errorf("sandbox name is required")
 	}
 
-	klog.V(2).Infof("Get sandbox tool by name=%s", sandbox.Name)
+	klog.V(2).Infof("Get sandbox tool by name=%s", input.Name)
 
-	sb, _ := a.controller.Get(sandbox.Name)
+	sb, _ := a.controller.Get(input.Name)
 	if sb == nil {
-		return nil, nil, fmt.Errorf("sandbox %s not found", sandbox.Name)
+		return nil, nil, fmt.Errorf("sandbox %s not found", input.Name)
 	}
 
 	sbJson, err := json.Marshal(sb)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal sandbox %s: %v", sandbox.Name, err)
+		return nil, nil, fmt.Errorf("failed to marshal sandbox %s: %v", input.Name, err)
 	}
 
-	stools, err := a.sandboxTools(ctx, sandbox.Name)
+	stools, err := a.sandboxTools(ctx, input.Name)
 	if err != nil {
 		stools = fmt.Sprintf("failed to get Sandbox tools error: %s, please retry to get Sandbox Tools by call getSandbox Tool", err.Error())
 	}
@@ -186,21 +189,21 @@ func (a *Handler) GetSandboxTool(ctx context.Context, req *mcp.CallToolRequest, 
 	}, nil, nil
 }
 
-func (a *Handler) DelSandboxTool(ctx context.Context, req *mcp.CallToolRequest, sandbox *SandboxBase) (*mcp.CallToolResult, any, error) {
-	if sandbox.Name == "" {
+func (a *Handler) DelSandboxTool(ctx context.Context, req *mcp.CallToolRequest, input *sandbox.SandboxBase) (*mcp.CallToolResult, any, error) {
+	if input.Name == "" {
 		return nil, nil, fmt.Errorf("sandbox name is required")
 	}
 
-	klog.V(2).Infof("Delete sandbox tool by name=%s", sandbox.Name)
+	klog.V(2).Infof("Delete sandbox tool by name=%s", input.Name)
 
-	err := a.controller.Delete(sandbox.Name)
+	err := a.controller.Delete(input.Name)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to delete Sandbox %s: %v", sandbox.Name, err)
+		return nil, nil, fmt.Errorf("failed to delete Sandbox %s: %v", input.Name, err)
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: fmt.Sprintf("Sandbox %s deleted successfully", sandbox.Name)},
+			&mcp.TextContent{Text: fmt.Sprintf("Sandbox %s deleted successfully", input.Name)},
 		},
 	}, nil, nil
 }

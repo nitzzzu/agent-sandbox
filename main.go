@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	metrics "k8s.io/metrics/pkg/client/clientset/versioned"
 	configmapinformer "knative.dev/pkg/configmap/informer"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/injection"
@@ -33,6 +34,8 @@ func main() {
 	cfg := config.InitConfig()
 
 	var fs flag.FlagSet
+	var err error
+
 	klog.InitFlags(&fs)
 	fs.Set("v", "2")
 
@@ -54,6 +57,10 @@ func main() {
 	rootCtx, informers := injection.Default.SetupInformers(rootCtx, kubecfg)
 
 	kubeClient := kubeclient.Get(rootCtx)
+	metricsClient, err := metrics.NewForConfig(kubecfg)
+	if err != nil {
+		klog.Fatalf("Failed to initialize metrics client: %v", err)
+	}
 
 	//load template for sandbox deployment and pool replicaSet
 	cfg.KubeClient = kubeClient
@@ -68,7 +75,6 @@ func main() {
 
 	// check k8s version is matched
 	// We sometimes start up faster than we can reach kube-api. Poll on failure to prevent us terminating
-	var err error
 	if perr := wait.PollUntilContextTimeout(rootCtx, time.Second, 60*time.Second, true, func(ctx context.Context) (bool, error) {
 		if err = version.CheckMinimumVersion(kubeClient.Discovery()); err != nil {
 			ctx.Done()
@@ -87,6 +93,7 @@ func main() {
 	pl := sandbox.NewPoolManager(rootCtx)
 	a := activator.NewActivator(rootCtx)
 	c := sandbox.NewController(rootCtx, kubecfg, pl)
+	c.MetricsClient = metricsClient
 
 	// Start the autoscaler
 	go func() {

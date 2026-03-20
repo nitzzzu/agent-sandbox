@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -38,12 +39,12 @@ func AcquireDest(rootCtx context.Context, name string, port string) (*url.URL, e
 
 	// Wait for pods to be ready avoid faster than rs creation and caching issue
 	if perr := wait.PollUntilContextTimeout(context.TODO(), 300*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		pods, err = podclient.Get(rootCtx).Lister().List(selector)
+		pods, err = podclient.Get(rootCtx).Lister().Pods(config.Cfg.SandboxNamespace).List(selector)
 		if err != nil {
 			return false, err
 		}
 		if len(pods) == 0 {
-			return false, nil
+			return false, fmt.Errorf("pod not found")
 		}
 		return true, nil
 	}); perr != nil {

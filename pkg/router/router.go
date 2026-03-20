@@ -73,13 +73,12 @@ func (s *SandboxRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	q.Del("port")
 	r.URL.RawQuery = q.Encode()
 
-	s.activator.RecordLastEvent(activator.EventTypeLastRequest, name)
-
 	targetURL, err := AcquireDest(s.rootCtx, name, port)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to acquire destination ip for sandbox %s: %v, possible instance is not ready yet, please retry later or checking pod status!", name, err), http.StatusBadGateway)
 		return
 	}
+	s.activator.RecordLastEvent(activator.EventTypeLastRequest, name)
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 	proxy.Transport = s.SharedTransport

@@ -17,33 +17,40 @@
 package sandbox
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"path"
 	"sort"
-
-	"context"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	"github.com/agent-sandbox/agent-sandbox/pkg/utils"
 	v1 "k8s.io/api/apps/v1"
+	v1core "k8s.io/api/core/v1"
+	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
+	"k8s.io/metrics/pkg/apis/metrics/v1beta1"
+	metrics "k8s.io/metrics/pkg/client/clientset/versioned"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	rsclient "knative.dev/pkg/client/injection/kube/informers/apps/v1/replicaset"
 	podclient "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
-
-	v1core "k8s.io/api/core/v1"
-	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type Controller struct {
-	kclient kubernetes.Interface
-	kcfg    *rest.Config
-	rootCtx context.Context
-	pl      *PoolManager
+	kclient       kubernetes.Interface
+	MetricsClient *metrics.Clientset
+	kcfg          *rest.Config
+	rootCtx       context.Context
+	pl            *PoolManager
 }
 
 func NewController(ctx context.Context, cfg *rest.Config, pl *PoolManager) *Controller {
@@ -108,6 +115,32 @@ func (s *Controller) GetSandbox(rs *v1.ReplicaSet) (*Sandbox, error) {
 	}
 
 	return sb, nil
+}
+
+func (s *Controller) ListPoolByNames(names []string) ([]*Sandbox, error) {
+	selectorString := fmt.Sprintf("%s=true,%s in (%s)", PoolLabel, TPLLabel, strings.Join(names, ","))
+	selector, _ := labels.Parse(selectorString)
+
+	return s.DoList(selector)
+}
+
+func (s *Controller) ListAllPool() ([]*Sandbox, error) {
+	selector := labels.Set{
+		"owner":   "agent-sandbox",
+		PoolLabel: "true",
+	}.AsSelector()
+
+	return s.DoList(selector)
+}
+
+func (s *Controller) ListPoolSandbox(name string) ([]*Sandbox, error) {
+	selector := labels.Set{
+		"owner":   "agent-sandbox",
+		PoolLabel: "true",
+		TPLLabel:  name,
+	}.AsSelector()
+
+	return s.DoList(selector)
 }
 
 func (s *Controller) ListAll() ([]*Sandbox, error) {
@@ -194,9 +227,10 @@ func (s *Controller) Create(sb *Sandbox) (*Sandbox, error) {
 
 func (s *Controller) GetInstances(name string) []*v1core.Pod {
 	selector, _ := labels.Parse(fmt.Sprintf("sandbox=%s", name))
-	pods, err := podclient.Get(context.TODO()).Lister().List(selector)
+	pods, err := podclient.Get(s.rootCtx).Lister().Pods(config.Cfg.SandboxNamespace).List(selector)
 	if err != nil {
-		return nil
+		klog.Errorf("failed to list pods, %v", err)
+		return []*v1core.Pod{}
 	}
 	return pods
 }
@@ -211,6 +245,18 @@ func (s *Controller) DeleteByID(id string) error {
 
 func (s *Controller) Delete(name string) error {
 	selector, _ := labels.Parse(fmt.Sprintf("sandbox=%s", name))
+	return s.DoDelete(selector)
+}
+
+func (s *Controller) DeleteByTemplateName(name string) error {
+	selector := labels.Set{
+		PoolLabel: "true",
+		TPLLabel:  name,
+	}.AsSelector()
+	return s.DoDelete(selector)
+}
+
+func (s *Controller) DoDelete(selector labels.Selector) error {
 	// delete rs by selector, since rs name may be different when acquire from pool
 	rss, err := rsclient.Get(s.rootCtx).Lister().ReplicaSets(config.Cfg.SandboxNamespace).List(selector)
 	if err != nil {
@@ -226,6 +272,377 @@ func (s *Controller) Delete(name string) error {
 	}
 
 	return nil
+}
+
+type SandboxLogsResult struct {
+	Sandbox   string    `json:"sandbox"`
+	Pod       string    `json:"pod"`
+	Container string    `json:"container"`
+	Logs      string    `json:"logs"`
+	FetchedAt time.Time `json:"fetchedAt"`
+}
+
+type SandboxTerminalResult struct {
+	Sandbox     string    `json:"sandbox"`
+	Pod         string    `json:"pod"`
+	Container   string    `json:"container"`
+	Command     string    `json:"command"`
+	Output      string    `json:"output"`
+	ErrorOutput string    `json:"errorOutput"`
+	ExecutedAt  time.Time `json:"executedAt"`
+}
+
+type SandboxTerminalSession struct {
+	Sandbox   string `json:"sandbox"`
+	Pod       string `json:"pod"`
+	Container string `json:"container"`
+}
+
+type SandboxFileEntry struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	IsDir bool   `json:"isDir"`
+	Size  int64  `json:"size"`
+}
+
+type SandboxFilesListResult struct {
+	Sandbox   string             `json:"sandbox"`
+	Pod       string             `json:"pod"`
+	Container string             `json:"container"`
+	Path      string             `json:"path"`
+	Entries   []SandboxFileEntry `json:"entries"`
+	FetchedAt time.Time          `json:"fetchedAt"`
+}
+
+type SandboxFileUploadResult struct {
+	Sandbox    string    `json:"sandbox"`
+	Pod        string    `json:"pod"`
+	Container  string    `json:"container"`
+	Path       string    `json:"path"`
+	FileName   string    `json:"fileName"`
+	UploadedAt time.Time `json:"uploadedAt"`
+}
+
+type SandboxFileDeleteResult struct {
+	Sandbox   string    `json:"sandbox"`
+	Pod       string    `json:"pod"`
+	Container string    `json:"container"`
+	Path      string    `json:"path"`
+	DeletedAt time.Time `json:"deletedAt"`
+}
+
+func normalizeSandboxPath(input string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." {
+		return "/"
+	}
+	return cleaned
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func parseSandboxFileEntries(output string) []SandboxFileEntry {
+	if strings.TrimSpace(output) == "" {
+		return []SandboxFileEntry{}
+	}
+
+	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+	entries := make([]SandboxFileEntry, 0, len(lines))
+	for _, line := range lines {
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) != 4 {
+			continue
+		}
+
+		size, err := strconv.ParseInt(parts[3], 10, 64)
+		if err != nil {
+			size = 0
+		}
+
+		entries = append(entries, SandboxFileEntry{
+			Name:  parts[0],
+			Path:  parts[1],
+			IsDir: parts[2] == "1",
+			Size:  size,
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
+
+	return entries
+}
+
+func (s *Controller) ListSandboxFiles(name, filePath string) (*SandboxFilesListResult, error) {
+	selected, err := s.selectSandboxPod(name)
+	if err != nil {
+		return nil, err
+	}
+
+	const containerName = "sandbox"
+	targetPath := normalizeSandboxPath(filePath)
+
+	cmd := []string{"sh", "-lc", fmt.Sprintf("target=%s; if [ ! -d \"$target\" ]; then echo \"path is not a directory: $target\" >&2; exit 1; fi; for entry in \"$target\"/* \"$target\"/.*; do [ -e \"$entry\" ] || continue; base=$(basename \"$entry\"); [ \"$base\" = \".\" ] || [ \"$base\" = \"..\" ] || { if [ -d \"$entry\" ]; then isDir=1; size=0; else isDir=0; size=$(wc -c < \"$entry\" | tr -d ' '); fi; printf '%%s\t%%s\t%%s\t%%s\\n' \"$base\" \"$entry\" \"$isDir\" \"$size\"; }; done", shellQuote(targetPath))}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err = utils.ExecStreamCommand(context.Background(), s.kclient, s.kcfg, config.Cfg.SandboxNamespace, selected.Name, containerName, cmd, nil, &stdout, &stderr)
+	if err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("%s", strings.TrimSpace(stderr.String()))
+		}
+		return nil, fmt.Errorf("failed to list files in pod %s: %w", selected.Name, err)
+	}
+
+	return &SandboxFilesListResult{
+		Sandbox:   name,
+		Pod:       selected.Name,
+		Container: containerName,
+		Path:      targetPath,
+		Entries:   parseSandboxFileEntries(stdout.String()),
+		FetchedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *Controller) UploadSandboxFile(name, targetPath string, reader io.Reader, filename string) (*SandboxFileUploadResult, error) {
+	selected, err := s.selectSandboxPod(name)
+	if err != nil {
+		return nil, err
+	}
+
+	const containerName = "sandbox"
+	normalizedPath := normalizeSandboxPath(targetPath)
+	baseName := path.Base(strings.TrimSpace(filename))
+	if baseName == "" || baseName == "." || baseName == "/" {
+		return nil, fmt.Errorf("invalid filename")
+	}
+
+	cmd := []string{"sh", "-lc", fmt.Sprintf("target=%s; file=%s; if [ ! -d \"$target\" ]; then echo \"path is not a directory: $target\" >&2; exit 1; fi; cat > \"$target/$file\"", shellQuote(normalizedPath), shellQuote(baseName))}
+
+	var stderr bytes.Buffer
+	err = utils.ExecStreamCommand(context.Background(), s.kclient, s.kcfg, config.Cfg.SandboxNamespace, selected.Name, containerName, cmd, reader, nil, &stderr)
+	if err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("%s", strings.TrimSpace(stderr.String()))
+		}
+		return nil, fmt.Errorf("failed to upload file to pod %s: %w", selected.Name, err)
+	}
+
+	return &SandboxFileUploadResult{
+		Sandbox:    name,
+		Pod:        selected.Name,
+		Container:  containerName,
+		Path:       normalizedPath,
+		FileName:   baseName,
+		UploadedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *Controller) DownloadSandboxFile(name, filePath string, writer io.Writer) error {
+	selected, err := s.selectSandboxPod(name)
+	if err != nil {
+		return err
+	}
+
+	const containerName = "sandbox"
+	normalizedPath := normalizeSandboxPath(filePath)
+	if normalizedPath == "/" {
+		return fmt.Errorf("path is required")
+	}
+
+	precheckCmd := []string{"sh", "-lc", fmt.Sprintf("target=%s; if [ ! -f \"$target\" ]; then echo \"file not found: $target\" >&2; exit 1; fi", shellQuote(normalizedPath))}
+	_, precheckErrOutput, precheckErr := utils.ExecCommand(s.kclient, s.kcfg, config.Cfg.SandboxNamespace, selected.Name, containerName, precheckCmd)
+	if precheckErr != nil {
+		if strings.TrimSpace(precheckErrOutput) != "" {
+			return fmt.Errorf("%s", strings.TrimSpace(precheckErrOutput))
+		}
+		return fmt.Errorf("failed to validate file in pod %s: %w", selected.Name, precheckErr)
+	}
+
+	streamCmd := []string{"sh", "-lc", fmt.Sprintf("target=%s; cat \"$target\"", shellQuote(normalizedPath))}
+	var stderr bytes.Buffer
+	err = utils.ExecStreamCommand(context.Background(), s.kclient, s.kcfg, config.Cfg.SandboxNamespace, selected.Name, containerName, streamCmd, nil, writer, &stderr)
+	if err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("download stream failed: %s", strings.TrimSpace(stderr.String()))
+		}
+		return fmt.Errorf("download stream failed for pod %s: %w", selected.Name, err)
+	}
+
+	return nil
+}
+
+func (s *Controller) DeleteSandboxFile(name, filePath string) (*SandboxFileDeleteResult, error) {
+	selected, err := s.selectSandboxPod(name)
+	if err != nil {
+		return nil, err
+	}
+
+	const containerName = "sandbox"
+	normalizedPath := normalizeSandboxPath(filePath)
+	if normalizedPath == "/" {
+		return nil, fmt.Errorf("path is required")
+	}
+
+	cmd := []string{"sh", "-lc", fmt.Sprintf("target=%s; if [ ! -f \"$target\" ]; then echo \"file not found or not a regular file: $target\" >&2; exit 1; fi; rm -f -- \"$target\"", shellQuote(normalizedPath))}
+	_, stderr, execErr := utils.ExecCommand(s.kclient, s.kcfg, config.Cfg.SandboxNamespace, selected.Name, containerName, cmd)
+	if execErr != nil {
+		if strings.TrimSpace(stderr) != "" {
+			return nil, fmt.Errorf("%s", strings.TrimSpace(stderr))
+		}
+		return nil, fmt.Errorf("failed to delete path in pod %s: %w", selected.Name, execErr)
+	}
+
+	return &SandboxFileDeleteResult{
+		Sandbox:   name,
+		Pod:       selected.Name,
+		Container: containerName,
+		Path:      normalizedPath,
+		DeletedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *Controller) selectSandboxPod(name string) (*v1core.Pod, error) {
+	pods := s.GetInstances(name)
+	if len(pods) == 0 {
+		return nil, fmt.Errorf("sandbox %s has no pods", name)
+	}
+
+	selected := pods[0]
+	for _, pod := range pods {
+		if pod.Status.Phase == v1core.PodRunning {
+			selected = pod
+			break
+		}
+	}
+
+	return selected, nil
+}
+
+func (s *Controller) StreamSandboxTerminal(ctx context.Context, name string, command []string, stdin io.Reader, stdout io.Writer, resizeCh <-chan utils.TerminalSize, onReady func(*SandboxTerminalSession)) error {
+	if len(command) == 0 {
+		return fmt.Errorf("command is required")
+	}
+
+	selected, err := s.selectSandboxPod(name)
+	if err != nil {
+		return err
+	}
+
+	const containerName = "sandbox"
+	session := &SandboxTerminalSession{
+		Sandbox:   name,
+		Pod:       selected.Name,
+		Container: containerName,
+	}
+	if onReady != nil {
+		onReady(session)
+	}
+
+	if err := utils.ExecInteractiveCommand(ctx, s.kclient, s.kcfg, config.Cfg.SandboxNamespace, selected.Name, containerName, command, stdin, stdout, nil, utils.NewTerminalSizeQueue(resizeCh)); err != nil {
+		return fmt.Errorf("failed to stream terminal in pod %s: %w", selected.Name, err)
+	}
+
+	return nil
+}
+
+func (s *Controller) GetSandboxLogs(name string, tailLines int64) (*SandboxLogsResult, error) {
+	pods := s.GetInstances(name)
+	if len(pods) == 0 {
+		return nil, fmt.Errorf("sandbox %s has no pods", name)
+	}
+
+	selected := pods[0]
+	for _, pod := range pods {
+		if pod.Status.Phase == v1core.PodRunning {
+			selected = pod
+			break
+		}
+	}
+
+	containerName := "sandbox"
+	options := &v1core.PodLogOptions{
+		Container: containerName,
+		TailLines: &tailLines,
+	}
+
+	stream, err := s.kclient.CoreV1().Pods(config.Cfg.SandboxNamespace).GetLogs(selected.Name, options).Stream(context.TODO())
+	if err != nil {
+		return nil, fmt.Errorf("failed to stream logs for pod %s: %w", selected.Name, err)
+	}
+	defer stream.Close()
+
+	logBytes, err := io.ReadAll(stream)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read logs for pod %s: %w", selected.Name, err)
+	}
+
+	return &SandboxLogsResult{
+		Sandbox:   name,
+		Pod:       selected.Name,
+		Container: containerName,
+		Logs:      string(logBytes),
+		FetchedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *Controller) ExecuteSandboxTerminal(name string, command []string) (*SandboxTerminalResult, error) {
+	if len(command) == 0 {
+		return nil, fmt.Errorf("command is required")
+	}
+
+	selected, err := s.selectSandboxPod(name)
+	if err != nil {
+		return nil, err
+	}
+
+	const containerName = "sandbox"
+	output, errorOutput, err := s.ExecCommandInPod(selected.Name, command)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute command in pod %s: %w", selected.Name, err)
+	}
+
+	return &SandboxTerminalResult{
+		Sandbox:     name,
+		Pod:         selected.Name,
+		Container:   containerName,
+		Command:     strings.Join(command, " "),
+		Output:      output,
+		ErrorOutput: errorOutput,
+		ExecutedAt:  time.Now().UTC(),
+	}, nil
+}
+
+func (s *Controller) SandboxMetrics(names []string) (data map[string]v1beta1.ContainerMetrics, err error) {
+	selectorString := fmt.Sprintf("%s in (%s)", TPLLabel, strings.Join(names, ","))
+	podMetricsList, err := s.MetricsClient.MetricsV1beta1().PodMetricses(config.Cfg.SandboxNamespace).List(context.TODO(), v1meta.ListOptions{LabelSelector: selectorString})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pod metrics: %w", err)
+	}
+
+	data = make(map[string]v1beta1.ContainerMetrics)
+	for _, podMetrics := range podMetricsList.Items {
+		if len(podMetrics.Containers) == 0 {
+			continue
+		}
+		data[podMetrics.Name] = podMetrics.Containers[0]
+	}
+
+	return data, nil
 }
 
 func (s *Controller) ExecCommandInPod(name string, cmd []string) (output string, outputErr string, err error) {

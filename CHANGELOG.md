@@ -20,3 +20,11 @@ V0.3.0 - 2026-03-03
 - Fix get default port bug.
 - Fix httpServer WriteTimeout config bug.
 -------------------------- 
+V0.3.1 - 2026-03-12
+- Add dynamic templates config load from configmap.
+- Template pool support warmup feature, which can pre-run some commands or scripts to keep the sandbox instance warmup and low  resource consumption.
+- Add skills for agent use.
+-------------------------- 
+V0.4.0 - 2026-03-19
+- Add UI for sandbox management, which can view sandbox instances, templates, and logs.
+-------------------------- 
