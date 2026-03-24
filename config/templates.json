@@ -11,7 +11,7 @@
   },
   {
     "name": "code-interpreter",
-    "image": "ghcr.io/agent-sandbox/code-interpreter:0.3.0",
+    "image": "ghcr.io/agent-sandbox/code-interpreter:0.4.0",
     "port": 49999,
     "pool": {
       "size": 0,
