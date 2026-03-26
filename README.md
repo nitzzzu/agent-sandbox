@@ -19,7 +19,7 @@ Shell commands etc. with stateful, long-running, multi-session and multi-tenant.
 </div>
 <div>
 <a href="docs/imgs/uiimg-sbs.png" target="_blank">
-    <img alt="agent-sandbox" src="docs/imgs/uiimg-sbs.png" width="90%"/>
+    <img alt="agent-sandbox" src="docs/imgs/uiimg-sbxs.png" width="90%"/>
 </a>
 </div>
 <div>
