@@ -15,9 +15,11 @@ Shell commands etc. with stateful, long-running, multi-session and multi-tenant.
 
 <div align="center">
 <h3>Agent-Sandbox UI</h3> 
-<div>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal access Tools for Sandbox etc. <br> ui path is <a href="https://agent-sandbox.domain.com/ui">https://agent-sandbox.domain.com/ui</a>. 
-Default admin login token is : `sys-2492a85b10ed4cb083b2c76b181eac96`,  config user token by env variable `API_TOKENS_RAW`. 
+<div>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal access Tools for Sandbox etc. <br><br/> UI path is <a href="https://agent-sandbox.domain.com/ui">https://agent-sandbox.domain.com/ui</a>.   
+<br/>
+  Default UI admin login token:  <b>sys-2492a85b10ed4cb083b2c76b181eac96</b>,  config user tokens by env variable <b>API_TOKENS_RAW</b>. 
 </div>
+  <br/><br/>
 <div>
 <a href="docs/imgs/uiimg-sbs.png" target="_blank">
     <img alt="agent-sandbox" src="docs/imgs/uiimg-sbxs.png" width="90%"/>
