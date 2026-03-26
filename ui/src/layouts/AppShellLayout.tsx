@@ -95,10 +95,22 @@ export default function AppShellLayout() {
                     </NavLink>
                 </li>
                 <li></li>
+                <li className="menu-title">Settings</li>
                 <li>
                     <NavLink to="/config/templates"
                              className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
                         Templates Config
+                    </NavLink>
+                </li>
+                <li>
+                    <NavLink to="/config/sandbox-template"
+                             className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                        Sandbox-Template Config
+                    </NavLink>
+                </li>
+                <li>
+                    <NavLink to="/events" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                        Events
                     </NavLink>
                 </li>
             </ul>

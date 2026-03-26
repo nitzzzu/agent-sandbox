@@ -16,3 +16,19 @@ export async function saveTemplatesConfig(payload: Template[]): Promise<string> 
     body: JSON.stringify(payload),
   })
 }
+
+export async function getSandboxTemplateConfig(): Promise<string> {
+  return requestEnvelope<string>('/config/sandbox-template', {
+    method: 'GET',
+  })
+}
+
+export async function saveSandboxTemplateConfig(payload: string): Promise<string> {
+  return requestEnvelope<string>('/config/sandbox-template', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+    body: payload,
+  })
+}

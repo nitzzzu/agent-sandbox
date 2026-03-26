@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/template"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/activator"
 	"github.com/agent-sandbox/agent-sandbox/pkg/auth"
@@ -33,7 +35,9 @@ import (
 	"github.com/agent-sandbox/agent-sandbox/pkg/sandbox"
 	"github.com/agent-sandbox/agent-sandbox/pkg/utils"
 	"github.com/gorilla/websocket"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/yaml"
 )
 
 const maxUploadBodyBytes = 100 << 20
@@ -301,6 +305,75 @@ func (a *Handler) GetSandboxLogs(r *http.Request) (interface{}, error) {
 	return logs, nil
 }
 
+func (a *Handler) ListSandboxEvents(r *http.Request) (interface{}, error) {
+	const defaultLimit int64 = 100
+	const maxLimit int64 = 500
+
+	sandboxName := strings.TrimSpace(r.URL.Query().Get("sandbox"))
+	limit := defaultLimit
+
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsedLimit, err := strconv.ParseInt(rawLimit, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid limit: %v", err)
+		}
+		if parsedLimit <= 0 {
+			return nil, fmt.Errorf("limit must be a positive integer")
+		}
+		if parsedLimit > maxLimit {
+			limit = maxLimit
+		} else {
+			limit = parsedLimit
+		}
+	}
+
+	result, err := a.controller.ListReplicaSetEvents(sandboxName, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+type SandboxMetricsRequest struct {
+	Names []string `json:"names"`
+}
+
+type SandboxMetricsResponse struct {
+	Items map[string]sandbox.SandboxMetricsItem `json:"items"`
+}
+
+func (a *Handler) SandboxMetrics(r *http.Request) (interface{}, error) {
+	var req SandboxMetricsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return nil, fmt.Errorf("failed to decode request body: %v", err)
+	}
+
+	normalizedNames := make([]string, 0, len(req.Names))
+	seen := make(map[string]struct{}, len(req.Names))
+	for _, name := range req.Names {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalizedNames = append(normalizedNames, trimmed)
+	}
+	if len(normalizedNames) == 0 {
+		return nil, fmt.Errorf("names is required")
+	}
+
+	items, err := a.controller.SandboxMetrics(normalizedNames)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SandboxMetricsResponse{Items: items}, nil
+}
+
 type SandboxTerminalRequest struct {
 	Command string `json:"command"`
 }
@@ -530,7 +603,61 @@ func (a *Handler) SaveTemplatesConfig(r *http.Request) (interface{}, error) {
 	} else {
 		return "ok", nil
 	}
+}
 
+func (a *Handler) GetSandboxTemplateConfig(r *http.Request) (interface{}, error) {
+	return config.Cfg.ReadSandboxTemplateFromCM()
+}
+
+func validateSandboxTemplateContent(content string) error {
+	tmpl, err := template.New("sandbox-template").Parse(content)
+	if err != nil {
+		return fmt.Errorf("invalid sandbox template syntax: %v", err)
+	}
+
+	sampleSandbox := sandbox.GetDefaultSandbox()
+	sampleSandbox.Name = "sbx-sample"
+	sampleSandbox.Image = config.Cfg.SandboxDefaultImage
+	sampleSandbox.TemplateObj = &config.Template{Name: sampleSandbox.Template, Image: sampleSandbox.Image}
+	tplData := &sandbox.SandboxKube{
+		Sandbox:   sampleSandbox,
+		RawData:   `{"name":"sbx-sample"}`,
+		Namespace: config.Cfg.SandboxNamespace,
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, tplData); err != nil {
+		return fmt.Errorf("failed to render sandbox template: %v", err)
+	}
+
+	rsObj := &appsv1.ReplicaSet{}
+	if err := yaml.Unmarshal(buf.Bytes(), rsObj); err != nil {
+		return fmt.Errorf("rendered sandbox template is not valid ReplicaSet YAML: %v", err)
+	}
+
+	return nil
+}
+
+func (a *Handler) SaveSandboxTemplateConfig(r *http.Request) (interface{}, error) {
+	contentBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read request body: %v", err)
+	}
+
+	content := string(contentBytes)
+	if strings.TrimSpace(content) == "" {
+		return "", fmt.Errorf("sandbox template content is required")
+	}
+
+	if err := validateSandboxTemplateContent(content); err != nil {
+		return "", err
+	}
+
+	if err := config.Cfg.SaveSandboxTemplateToCM(content); err != nil {
+		return "", fmt.Errorf("failed to save sandbox template config error: %v", err)
+	}
+
+	return "ok", nil
 }
 
 // ------------------------------------------------------

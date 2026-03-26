@@ -37,16 +37,18 @@ import (
 
 // PoolManager manages sandbox pool replicasets
 type PoolManager struct {
-	client  kubernetes.Interface
-	rootCtx context.Context
+	client             kubernetes.Interface
+	rootCtx            context.Context
+	replenishTriggerCh chan struct{}
 }
 
 // NewPoolManager creates a new PoolManager instance
 func NewPoolManager(ctx context.Context) *PoolManager {
 	c := kubeclient.Get(ctx)
 	return &PoolManager{
-		client:  c,
-		rootCtx: ctx,
+		client:             c,
+		rootCtx:            ctx,
+		replenishTriggerCh: make(chan struct{}, 1),
 	}
 }
 
@@ -85,6 +87,7 @@ func (pm *PoolManager) AcquirePoolReplicaSet(sb *Sandbox) (*v1.ReplicaSet, bool,
 		return nil, false, fmt.Errorf("failed to acquire any pool replicaset: %v", err)
 	}
 
+	pm.enqueueReplenishTrigger("acquire-from-pool")
 	return acquiredRS, true, nil
 }
 
@@ -208,12 +211,30 @@ func (pm *PoolManager) createSingleReplicaSet(sb *Sandbox) (*v1.ReplicaSet, erro
 	return createdRS, nil
 }
 
+func (pm *PoolManager) enqueueReplenishTrigger(reason string) {
+	select {
+	case <-pm.rootCtx.Done():
+		klog.V(2).Infof("skip replenish trigger enqueue (%s): pool manager stopping", reason)
+		return
+	default:
+	}
+
+	select {
+	case pm.replenishTriggerCh <- struct{}{}:
+		klog.V(2).Infof("enqueued replenish trigger (%s)", reason)
+	default:
+		klog.V(2).Infof("replenish trigger already pending, coalesced (%s)", reason)
+	}
+}
+
 func (pm *PoolManager) StartPoolSyncing() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
+			pm.replenishPoolAsync()
+		case <-pm.replenishTriggerCh:
 			pm.replenishPoolAsync()
 		case <-pm.rootCtx.Done():
 			klog.Info("Scaler stopping")
@@ -223,7 +244,6 @@ func (pm *PoolManager) StartPoolSyncing() {
 }
 
 // ReplenishPoolAsync asynchronously replenishes the pool to the target size
-// TODO: delete pool, current delete pool by manually: kubectl -n sandbox delete rs -l sbx-pool=true sbx-template=<template-name>
 func (pm *PoolManager) replenishPoolAsync() {
 	tpls := config.Templates
 	for _, tpl := range tpls {

@@ -19,6 +19,8 @@ package activator
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	corev1 "k8s.io/api/core/v1"
@@ -38,25 +40,48 @@ const (
 	EventTypeLastRequest string = "LastRequestTime"
 
 	EventTypeLastResponse string = "LastResponseTime"
+
+	recordEventInterval = 2 * time.Minute
 )
 
 type Activator struct {
-	rootCtx  context.Context
-	recorder record.EventRecorder
+	rootCtx            context.Context
+	recorder           record.EventRecorder
+	lastEventRecordAt  map[string]time.Time
+	lastEventRecordMux sync.Mutex
 }
 
 func NewActivator(ctx context.Context) *Activator {
 	recorder := GetRecorder(ctx)
 	a := &Activator{
-		rootCtx:  ctx,
-		recorder: recorder,
+		rootCtx:           ctx,
+		recorder:          recorder,
+		lastEventRecordAt: make(map[string]time.Time),
 	}
 	return a
 }
 
 func (a *Activator) RecordLastEvent(eventType string, name string) {
+	now := time.Now()
+	cacheKey := eventType + "/" + name
+
+	a.lastEventRecordMux.Lock()
+	lastAt, ok := a.lastEventRecordAt[cacheKey]
+	if ok && now.Sub(lastAt) < recordEventInterval {
+		a.lastEventRecordMux.Unlock()
+		klog.V(2).Infof("skip recording event %s for sandbox %s: throttled", eventType, name)
+		return
+	}
+	a.lastEventRecordAt[cacheKey] = now
+	a.lastEventRecordMux.Unlock()
+
 	rs, err := rsclient.Get(a.rootCtx).Lister().ReplicaSets(config.Cfg.SandboxNamespace).Get(name)
 	if err != nil {
+		a.lastEventRecordMux.Lock()
+		if current, exists := a.lastEventRecordAt[cacheKey]; exists && current.Equal(now) {
+			delete(a.lastEventRecordAt, cacheKey)
+		}
+		a.lastEventRecordMux.Unlock()
 		klog.ErrorS(err, "Failed to record event ", "name", name)
 		return
 	}

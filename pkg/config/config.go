@@ -32,23 +32,33 @@ import (
 	"k8s.io/klog/v2"
 )
 
+type Resources struct {
+	CPU         string `json:"cpu"`
+	Memory      string `json:"memory"`
+	CPULimit    string `json:"cpuLimit"`
+	MemoryLimit string `json:"memoryLimit"`
+}
+
 type TemplatePool struct {
-	Size       int    `json:"size"`
-	ReadySize  int    `json:"readySize"`
-	ProbePort  int    `json:"probePort"`
-	WarmupCmd  string `json:"warmupCmd"`
-	StartupCmd string `json:"startupCmd"`
+	Size       int       `json:"size"`
+	ReadySize  int       `json:"readySize"`
+	ProbePort  int       `json:"probePort"`
+	WarmupCmd  string    `json:"warmupCmd"`
+	StartupCmd string    `json:"startupCmd"`
+	Resources  Resources `json:"resources"`
 }
 
 type Template struct {
-	Name           string       `json:"name" required:"false"`
-	Pattern        string       `json:"pattern" required:"false"`
-	Image          string       `json:"image" required:"false"`
-	Port           int          `json:"port" required:"false"`
-	Type           string       `json:"type" required:"false" description:"dynamic or static, default is static, dynamic means template is dynamic by regexp"`
-	NoStartupProbe bool         `json:"noStartupProbe" required:"false"`
-	Pool           TemplatePool `json:"pool" required:"false"`
-	Description    string       `json:"description" required:"false"`
+	Name           string            `json:"name" required:"false"`
+	Pattern        string            `json:"pattern" required:"false"`
+	Image          string            `json:"image" required:"false"`
+	Port           int               `json:"port" required:"false"`
+	Type           string            `json:"type" required:"false" description:"dynamic or static, default is static, dynamic means template is dynamic by regexp"`
+	Metadata       map[string]string `json:"metadata" required:"false"`
+	NoStartupProbe bool              `json:"noStartupProbe" required:"false"`
+	Resources      Resources         `json:"resources"  required:"false"`
+	Pool           TemplatePool      `json:"pool" required:"false"`
+	Description    string            `json:"description" required:"false"`
 }
 
 var Cfg *Config
@@ -101,52 +111,70 @@ func InitConfig() *Config {
 	return Cfg
 }
 
-func (c *Config) LoadSandboxRSTemplate() {
-	var err error
-	var val []byte
-	if val, err = os.ReadFile(c.SandboxTemplateFile); err != nil {
-		panic(err)
+func (c *Config) ShouldLoadSandboxTemplate() {
+	content, err := c.ReadSandboxTemplateFromCM()
+	if content == "" {
+		klog.Errorf("failed to read sandbox template from configmap, content is empty, error: %v", err)
 	}
-	SandboxDeployTemplate = string(val)
+	klog.Info("loaded sandbox template from configmap content = ", content)
+	SandboxDeployTemplate = content
 }
 
 func (c *Config) CheckConfigmap() {
-	cmcontent, err := c.ReadTemplatesFromCM()
-	if cmcontent != "" {
-		klog.Info("templates config already exists in configmap")
-		return
-	}
+	templatesContent, err := c.ReadTemplatesFromCM()
+	if templatesContent == "" {
+		klog.Info("templates config is empty, will load from local file system")
 
-	klog.Info("templates config is empty, will load from local file system")
+		fileName := c.SandboxTemplatesConfigFile
+		content, readErr := os.ReadFile(fileName)
+		if readErr != nil {
+			klog.Fatalf("Failed to read Template config file %s error: %v", fileName, readErr)
+		}
 
-	//load templates config, read file from cfg.SandboxTemplatesConfigFile by os.ReadFile
-	fileName := c.SandboxTemplatesConfigFile
-	content, err := os.ReadFile(fileName)
-	if err != nil {
-		klog.Fatalf("Failed to read Template config file %s error: %v", fileName, err)
-	}
+		templatesContent = string(content)
+		klog.Infof("Loaded Template config from file %s", fileName)
 
-	templatesContent := string(content)
-
-	klog.Infof("Loaded Template config from file %s, content is %s", fileName, templatesContent)
-
-	// store templates config to configmap
-	err = c.SaveTemplatesToCM(templatesContent)
-	if err != nil {
-		klog.Fatalf("Failed to save Templates config to configmap, error: %v, config content %v", err, templatesContent)
-	} else {
+		if err = c.SaveTemplatesToCM(templatesContent); err != nil {
+			klog.Fatalf("Failed to save Templates config to configmap, error: %v", err)
+		}
 		klog.Info("Templates config saved to configmap successfully")
+	} else {
+		klog.Info("templates config already exists in configmap")
+	}
+
+	sandboxTemplateContent, err := c.ReadSandboxTemplateFromCM()
+	if err != nil {
+		klog.Fatalf("Failed to read sandbox template from configmap: %v", err)
+	}
+	if sandboxTemplateContent == "" {
+		klog.Info("sandbox template config is empty, will load from local file system")
+
+		fileName := c.SandboxTemplateFile
+		content, readErr := os.ReadFile(fileName)
+		if readErr != nil {
+			klog.Fatalf("Failed to read sandbox template file %s error: %v", fileName, readErr)
+		}
+
+		sandboxTemplateContent = string(content)
+		klog.Infof("Loaded sandbox template config from file %s", fileName)
+
+		if err = c.SaveSandboxTemplateToCM(sandboxTemplateContent); err != nil {
+			klog.Fatalf("Failed to save sandbox template config to configmap, error: %v", err)
+		}
+		klog.Info("Sandbox template config saved to configmap successfully")
+	} else {
+		klog.Info("sandbox template config already exists in configmap")
 	}
 }
 
-// LoadTemplates load templates config from:
-func (c *Config) LoadTemplates() {
+// ShouldLoadTemplates load templates config from:
+func (c *Config) ShouldLoadTemplates() {
 	templatesContent := ""
 
 	// load config from configmap
 	content, err := c.ReadTemplatesFromCM()
 	if content == "" {
-		klog.Fatalf("Failed to read Templates config from configmap, content is empty, error: %v", err)
+		klog.Errorf("Failed to read Templates config from configmap, content is empty, error: %v", err)
 	}
 	klog.Info("Loaded Templates config from configmap: ", content)
 	templatesContent = content
@@ -154,18 +182,18 @@ func (c *Config) LoadTemplates() {
 	var tpls []*Template
 	err = json.Unmarshal([]byte(templatesContent), &tpls)
 	if err != nil {
-		klog.Fatalf("Failed to unmarshal Template config templatesContent %s error: %v", templatesContent, err)
+		klog.Errorf("Failed to unmarshal Template config templatesContent %s error: %v", templatesContent, err)
 	}
 
 	//check envs not empty
 	if len(tpls) == 0 {
-		klog.Fatalf("No Templates  found in config content %s", templatesContent)
+		klog.Errorf("No Templates  found in config content %s", templatesContent)
 	}
 
 	//varify each env has name  image and description
 	for _, env := range tpls {
 		if env.Name == "" || env.Image == "" || env.Description == "" {
-			klog.Fatalf("Invalid Template config in templatesContent %s: %+v, name image and desc must not dempty", templatesContent, env)
+			klog.Errorf("Invalid Template config in templatesContent %s: %+v, name image and desc must not dempty", templatesContent, env)
 		}
 	}
 
@@ -220,7 +248,51 @@ func (c *Config) ReadTemplatesFromCM() (content string, err error) {
 	}
 
 	return existCm.Data[TemplatesConfigMapKey], nil
+}
 
+func (c *Config) SaveSandboxTemplateToCM(content string) error {
+	cmClient := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace)
+
+	existCm, err := cmClient.Get(context.TODO(), TemplatesConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			cm := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      TemplatesConfigMapName,
+					Namespace: c.SandboxNamespace,
+				},
+				Data: map[string]string{
+					SandboxTemplateConfigMapKey: content,
+				},
+			}
+			_, createErr := cmClient.Create(context.TODO(), cm, metav1.CreateOptions{})
+			return createErr
+		}
+
+		return err
+	}
+
+	if existCm.Data == nil {
+		existCm.Data = map[string]string{}
+	}
+	existCm.Data[SandboxTemplateConfigMapKey] = content
+	_, err = cmClient.Update(context.TODO(), existCm, metav1.UpdateOptions{})
+	return err
+}
+
+func (c *Config) ReadSandboxTemplateFromCM() (content string, err error) {
+	sandboxTemplateContent := ""
+
+	existCm, err := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace).Get(context.TODO(), TemplatesConfigMapName, metav1.GetOptions{})
+	if err != nil && errors.IsNotFound(err) {
+		klog.Info("sandbox template configmap not found, return empty content")
+		return sandboxTemplateContent, nil
+	} else if err != nil {
+		klog.Errorf("Failed to get ConfigMap for sandbox template config: %v", err)
+		return sandboxTemplateContent, err
+	}
+
+	return existCm.Data[SandboxTemplateConfigMapKey], nil
 }
 
 func GetTemplateByName(name string) (*Template, error) {

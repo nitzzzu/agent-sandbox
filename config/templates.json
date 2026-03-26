@@ -13,11 +13,26 @@
     "name": "code-interpreter",
     "image": "ghcr.io/agent-sandbox/code-interpreter:0.4.0",
     "port": 49999,
+    "resources": {
+      "cpu": "0.2",
+      "memory": "200Mi",
+      "cpuLimit": "1",
+      "memoryLimit": "1Gi"
+    },
+    "metadata": {
+      "runtimeClassName": "gvisor"
+    },
     "pool": {
       "size": 0,
       "probePort": 8888,
       "warmupCmd": "/root/.server/warmup.sh",
-      "startupCmd": "/root/.server/startup.sh"
+      "startupCmd": "/root/.server/startup.sh",
+      "resources": {
+        "cpu": "0",
+        "memory": "60Mi",
+        "cpuLimit": "0.2",
+        "memoryLimit": "100Mi"
+      }
     },
     "description": "providing a code interpreter environment, E2B featured."
   },

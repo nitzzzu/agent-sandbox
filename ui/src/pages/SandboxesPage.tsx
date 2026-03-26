@@ -1,8 +1,8 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { createSandbox, deleteSandbox, listSandboxes } from '../lib/api/sandbox'
-import type { CreateSandboxRequest, Sandbox } from '../lib/api/types'
+import { createSandbox, deleteSandbox, getSandboxMetrics, listSandboxes } from '../lib/api/sandbox'
+import type { CreateSandboxRequest, Sandbox, SandboxMetricsItem } from '../lib/api/types'
 
 type CreateFormState = {
   name: string
@@ -11,12 +11,21 @@ type CreateFormState = {
   timeout: string
 }
 
+type MetricsStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+type SandboxMetricsState = {
+  status: MetricsStatus
+  item?: SandboxMetricsItem
+}
+
 const initialCreateFormState: CreateFormState = {
   name: '',
   template: '',
   image: '',
   timeout: '',
 }
+
+const metricsBatchSize = 10
 
 function formatCreatedAt(value?: string): string {
   if (!value) {
@@ -61,6 +70,169 @@ function buildCreatePayload(form: CreateFormState): CreateSandboxRequest {
   return payload
 }
 
+function parseCpuMilli(value?: string): number | null {
+  if (!value) {
+    return null
+  }
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  if (trimmed.endsWith('m')) {
+    const milli = Number.parseFloat(trimmed.slice(0, -1))
+    return Number.isFinite(milli) && milli > 0 ? milli : null
+  }
+
+  const cores = Number.parseFloat(trimmed)
+  if (!Number.isFinite(cores) || cores <= 0) {
+    return null
+  }
+  return cores * 1000
+}
+
+function parseMemoryBytes(value?: string): number | null {
+  if (!value) {
+    return null
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const match = trimmed.match(/^([0-9]+(?:\.[0-9]+)?)([a-zA-Z]+)?$/)
+  if (!match) {
+    return null
+  }
+
+  const amount = Number.parseFloat(match[1])
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null
+  }
+
+  const unit = (match[2] ?? '').toLowerCase()
+  const factors: Record<string, number> = {
+    '': 1,
+    b: 1,
+    k: 1000,
+    m: 1000 ** 2,
+    g: 1000 ** 3,
+    t: 1000 ** 4,
+    p: 1000 ** 5,
+    ki: 1024,
+    mi: 1024 ** 2,
+    gi: 1024 ** 3,
+    ti: 1024 ** 4,
+    pi: 1024 ** 5,
+  }
+
+  const factor = factors[unit]
+  if (!factor) {
+    return null
+  }
+
+  return amount * factor
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+  if (value < 0) {
+    return 0
+  }
+  return value
+}
+
+function buildRadialStyle(percent: number): CSSProperties {
+  return {
+    '--value': `${Math.round(percent)}`,
+    '--size': '2rem',
+    '--thickness': '1.5px',
+  } as CSSProperties
+}
+
+function renderMetricFallback(metrics: SandboxMetricsState | undefined, text: string): string {
+  if (!metrics || metrics.status === 'idle' || metrics.status === 'loading') {
+    return '...'
+  }
+  if (metrics.status !== 'ready' || !metrics.item) {
+    return '-'
+  }
+  return text
+}
+
+function wrapWithResourcesTooltip(content: ReactNode, metrics: SandboxMetricsState | undefined, sandbox: Sandbox) {
+    const item = metrics?.status === 'ready' ? metrics.item : undefined
+
+  return (
+    <div className="tooltip tooltip-left">
+        <div className="tooltip-content">
+            CPU:  {sandbox.cpu || '-'} - {sandbox.cpu_limit || '-'}, Usage:  {item ? `${item.cpuMilli}m` : '-'}<br/>
+            Memory:  {sandbox.memory || '-'} - {sandbox.memory_limit || '-'}, Usage: {item ? `${Math.round(item.memoryMB)}MiB` : '-'}
+        </div>
+      <div>{content}</div>
+    </div>
+  )
+}
+
+function renderCpuCell(metrics: SandboxMetricsState | undefined, sandbox: Sandbox) {
+  const fallback = renderMetricFallback(metrics, metrics?.item ? `${metrics.item.cpuMilli}m` : '-')
+  if (fallback !== `${metrics?.item?.cpuMilli ?? ''}m`) {
+    return wrapWithResourcesTooltip(fallback, metrics, sandbox)
+  }
+
+  const item = metrics?.item
+  if (!item) {
+    return wrapWithResourcesTooltip('-', metrics, sandbox)
+  }
+
+  const cpuRequestMilli = parseCpuMilli(sandbox.cpu)
+  if (!cpuRequestMilli) {
+    return wrapWithResourcesTooltip(`${item.cpuMilli}m`, metrics, sandbox)
+  }
+
+  const percent = clampPercent((item.cpuMilli / cpuRequestMilli) * 100)
+  return wrapWithResourcesTooltip(
+    <div>
+      <div className="radial-progress text-info" style={buildRadialStyle(percent)} role="progressbar" aria-valuenow={Math.round(percent)}>
+        {Math.round(percent)}
+      </div>
+    </div>,
+    metrics,
+    sandbox
+  )
+}
+
+function renderMemoryCell(metrics: SandboxMetricsState | undefined, sandbox: Sandbox) {
+  const fallback = renderMetricFallback(metrics, metrics?.item ? `${Math.round(metrics.item.memoryMB)} MiB` : '-')
+  if (fallback !== `${Math.round(metrics?.item?.memoryMB ?? 0)} MiB`) {
+    return wrapWithResourcesTooltip(fallback, metrics, sandbox)
+  }
+
+  const item = metrics?.item
+  if (!item) {
+    return wrapWithResourcesTooltip('-', metrics, sandbox)
+  }
+
+  const memoryRequestBytes = parseMemoryBytes(sandbox.memory)
+  if (!memoryRequestBytes) {
+    return wrapWithResourcesTooltip(`${Math.round(item.memoryMB)} MiB`, metrics, sandbox)
+  }
+
+  const percent = clampPercent((item.memoryBytes / memoryRequestBytes) * 100)
+  return wrapWithResourcesTooltip(
+    <div>
+      <div className="radial-progress text-warning" style={buildRadialStyle(percent)} role="progressbar" aria-valuenow={Math.round(percent)}>
+        {Math.round(percent)}
+      </div>
+    </div>,
+    metrics,
+    sandbox
+  )
+}
+
 export default function SandboxesPage() {
   const navigate = useNavigate()
   const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
@@ -74,6 +246,11 @@ export default function SandboxesPage() {
   const [successMessage, setSuccessMessage] = useState('')
   const [formState, setFormState] = useState<CreateFormState>(initialCreateFormState)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
+  const [metricsByName, setMetricsByName] = useState<Record<string, SandboxMetricsState>>({})
+
+  const inflightNamesRef = useRef<Set<string>>(new Set())
+  const requestSerialByNameRef = useRef<Record<string, number>>({})
+  const fetchDebounceTimerRef = useRef<number | null>(null)
 
   const refreshSandboxes = async (options?: { keepMessages?: boolean }) => {
     setIsListLoading(true)
@@ -98,6 +275,127 @@ export default function SandboxesPage() {
   useEffect(() => {
     void refreshSandboxes()
   }, [])
+
+  useEffect(() => {
+    const existingNames = new Set(sandboxes.map((sandbox) => sandbox.name?.trim() ?? '').filter((name) => name !== ''))
+
+    setMetricsByName((prev) => {
+      const next: Record<string, SandboxMetricsState> = {}
+      for (const [name, value] of Object.entries(prev)) {
+        if (existingNames.has(name)) {
+          next[name] = value
+        }
+      }
+      for (const name of existingNames) {
+        if (!next[name]) {
+          next[name] = { status: 'idle' }
+        }
+      }
+      return next
+    })
+
+    const nextInflight = new Set<string>()
+    for (const name of inflightNamesRef.current) {
+      if (existingNames.has(name)) {
+        nextInflight.add(name)
+      }
+    }
+    inflightNamesRef.current = nextInflight
+
+    const nextRequestSerialByName: Record<string, number> = {}
+    for (const [name, serial] of Object.entries(requestSerialByNameRef.current)) {
+      if (existingNames.has(name)) {
+        nextRequestSerialByName[name] = serial
+      }
+    }
+    requestSerialByNameRef.current = nextRequestSerialByName
+  }, [sandboxes])
+
+  useEffect(() => {
+    if (fetchDebounceTimerRef.current !== null) {
+      window.clearTimeout(fetchDebounceTimerRef.current)
+    }
+
+    fetchDebounceTimerRef.current = window.setTimeout(() => {
+      const sandboxNames = sandboxes.map((sandbox) => (sandbox.name ?? '').trim()).filter((name) => name !== '')
+      const namesToFetch = sandboxNames
+        .filter((name) => {
+          if (inflightNamesRef.current.has(name)) {
+            return false
+          }
+          const current = metricsByName[name]
+          return !current || current.status === 'idle'
+        })
+        .slice(0, metricsBatchSize)
+
+      if (namesToFetch.length === 0) {
+        return
+      }
+
+      for (const name of namesToFetch) {
+        inflightNamesRef.current.add(name)
+      }
+
+      setMetricsByName((prev) => {
+        const next = { ...prev }
+        for (const name of namesToFetch) {
+          next[name] = { status: 'loading' }
+        }
+        return next
+      })
+
+      const requestSerials: Record<string, number> = {}
+      for (const name of namesToFetch) {
+        const nextSerial = (requestSerialByNameRef.current[name] ?? 0) + 1
+        requestSerialByNameRef.current[name] = nextSerial
+        requestSerials[name] = nextSerial
+      }
+
+      void getSandboxMetrics(namesToFetch)
+        .then((result) => {
+          const items = result.items ?? {}
+          setMetricsByName((prev) => {
+            const next = { ...prev }
+            for (const name of namesToFetch) {
+              if (requestSerialByNameRef.current[name] !== requestSerials[name]) {
+                continue
+              }
+
+              const item = items[name]
+              if (item) {
+                next[name] = { status: 'ready', item }
+              } else {
+                next[name] = { status: 'ready' }
+              }
+            }
+            return next
+          })
+        })
+        .catch(() => {
+          setMetricsByName((prev) => {
+            const next = { ...prev }
+            for (const name of namesToFetch) {
+              if (requestSerialByNameRef.current[name] !== requestSerials[name]) {
+                continue
+              }
+              next[name] = { status: 'error' }
+            }
+            return next
+          })
+        })
+        .finally(() => {
+          for (const name of namesToFetch) {
+            inflightNamesRef.current.delete(name)
+          }
+        })
+    }, 120)
+
+    return () => {
+      if (fetchDebounceTimerRef.current !== null) {
+        window.clearTimeout(fetchDebounceTimerRef.current)
+      }
+    }
+  }, [metricsByName, sandboxes])
 
   const isDeleteDisabled = (sandboxName: string) => !sandboxName || Boolean(deletingName)
 
@@ -234,8 +532,8 @@ export default function SandboxesPage() {
               </div>
             )}
 
-              <div className="h-[calc(100vh-18rem)] overflow-x-auto rounded-box border border-base-300">
-                  <table className="table  table-pin-rows table-zebra">
+            <div className="h-[calc(100vh-18rem)] overflow-auto rounded-box border border-base-300">
+              <table className="table table-pin-rows table-zebra">
                 <thead>
                   <tr>
                     <th>#</th>
@@ -243,6 +541,8 @@ export default function SandboxesPage() {
                     <th>Template</th>
                     <th>Image</th>
                     <th>Status</th>
+                    <th>CPU %</th>
+                    <th>Memory %</th>
                     <th>Timeout</th>
                     <th>Created</th>
                     <th className="text-center">Actions</th>
@@ -251,7 +551,7 @@ export default function SandboxesPage() {
                 <tbody>
                   {sandboxes.length === 0 ? (
                     <tr>
-                      <td className="text-center text-base-content/70" colSpan={8}>
+                      <td className="text-center text-base-content/70" colSpan={10}>
                         {isListLoading ? 'Loading sandboxes...' : 'No sandboxes found.'}
                       </td>
                     </tr>
@@ -259,74 +559,81 @@ export default function SandboxesPage() {
                     sandboxes.map((sandbox, index) => {
                       const sandboxName = sandbox.name ?? ''
                       const isDeleting = deletingName === sandboxName
+                      const metrics = sandboxName ? metricsByName[sandboxName] : undefined
 
                       return (
                         <tr key={sandboxName || sandbox.id || `sandbox-${index}`}>
                           <td>{index + 1}</td>
-                            <td className="font-medium">
-                                <a className="link link-hover link-success" href={`/sandbox/${sandbox.name}/health`} target="_blank">{sandbox.name || '-'}</a>
-                                <div className="text-xs text-base-content/40 font-normal">
-                                    <a className="link link-hover" href={`/sandboxes/router/${sandbox.id}/${sandbox.port}/health`} target="_blank">{sandbox.id || '-'}</a>
-                                </div>
-                            </td>
-                            <td>{sandbox.template || '-'}</td>
+                          <td className="font-medium">
+                            <a className="link link-hover link-success" href={`/sandbox/${sandbox.name}/health`} target="_blank" rel="noreferrer">
+                              {sandbox.name || '-'}
+                            </a>
+                            <div className="text-xs text-base-content/40 font-normal">
+                              <a className="link link-hover" href={`/sandboxes/router/${sandbox.id}/${sandbox.port}/health`} target="_blank" rel="noreferrer">
+                                {sandbox.id || '-'}
+                              </a>
+                            </div>
+                          </td>
+                          <td>{sandbox.template || '-'}</td>
                           <td>{sandbox.image || '-'}</td>
                           <td>
                             {sandbox.status ? (
-                              <span className={`badge badge-sm  ${sandbox.status === 'running' ? 'badge-success' : 'badge-warning'}`}>{sandbox.status}</span>
+                              <span className={`badge badge-sm ${sandbox.status === 'running' ? 'badge-success' : 'badge-warning'}`}>{sandbox.status}</span>
                             ) : (
                               '-'
                             )}
                           </td>
+                          <td style={{fontSize:"10px"}}>{renderCpuCell(metrics, sandbox)}</td>
+                            <td style={{fontSize:"10px"}}>{renderMemoryCell(metrics, sandbox)}</td>
                           <td>{typeof sandbox.timeout === 'number' ? `${sandbox.timeout}s` : '-'}</td>
                           <td>{formatCreatedAt(sandbox.created_at)}</td>
                           <td className="text-right">
                             <div className="text-center">
-                                <div className="mb-2 w-35">
-                              <button
-                                className="btn btn-xs btn-outline mr-2"
-                                type="button"
-                                disabled={!sandboxName || Boolean(deletingName)}
-                                onClick={() => {
-                                  navigate(`/logs?sandbox=${encodeURIComponent(sandboxName)}`)
-                                }}
-                              >
-                                Logs
-                              </button>
-                              <button
-                                className="btn btn-xs btn-outline"
-                                type="button"
-                                disabled={!sandboxName || Boolean(deletingName)}
-                                onClick={() => {
-                                  navigate(`/files?sandbox=${encodeURIComponent(sandboxName)}`)
-                                }}
-                              >
-                                Files
-                              </button>
-                                </div>
-                                <div>
-                              <button
-                                className="btn btn-xs  btn-warning  mr-1"
-                                type="button"
-                                disabled={!sandboxName || Boolean(deletingName)}
-                                onClick={() => {
-                                  navigate(`/terminal?sandbox=${encodeURIComponent(sandboxName)}`)
-                                }}
-                              >
-                                Terminal
-                              </button>
-                              <button
-                                className={`btn btn-xs btn-error ${isDeleting ? 'btn-disabled' : ''}`}
-                                type="button"
-                                disabled={isDeleteDisabled(sandboxName)}
-                                onClick={() => {
-                                  handleDeleteClick(sandbox.name)
-                                }}
-                              >
-                                {isDeleting ? 'Deleting...' : 'Delete'}
-                              </button>
-                                </div>
-                                </div>
+                              <div className="mb-2 w-35">
+                                <button
+                                  className="btn btn-xs btn-outline mr-2"
+                                  type="button"
+                                  disabled={!sandboxName || Boolean(deletingName)}
+                                  onClick={() => {
+                                    navigate(`/logs?sandbox=${encodeURIComponent(sandboxName)}`)
+                                  }}
+                                >
+                                  Logs
+                                </button>
+                                <button
+                                  className="btn btn-xs btn-outline"
+                                  type="button"
+                                  disabled={!sandboxName || Boolean(deletingName)}
+                                  onClick={() => {
+                                    navigate(`/files?sandbox=${encodeURIComponent(sandboxName)}`)
+                                  }}
+                                >
+                                  Files
+                                </button>
+                              </div>
+                              <div>
+                                <button
+                                  className="btn btn-xs btn-warning btn-outline mr-1"
+                                  type="button"
+                                  disabled={!sandboxName || Boolean(deletingName)}
+                                  onClick={() => {
+                                    navigate(`/terminal?sandbox=${encodeURIComponent(sandboxName)}`)
+                                  }}
+                                >
+                                  Terminal
+                                </button>
+                                <button
+                                  className={`btn btn-xs btn-outline btn-error ${isDeleting ? 'btn-disabled' : ''}`}
+                                  type="button"
+                                  disabled={isDeleteDisabled(sandboxName)}
+                                  onClick={() => {
+                                    handleDeleteClick(sandbox.name)
+                                  }}
+                                >
+                                  {isDeleting ? 'Deleting...' : 'Delete'}
+                                </button>
+                              </div>
+                            </div>
                           </td>
                         </tr>
                       )

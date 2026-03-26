@@ -1,5 +1,5 @@
 import { requestEnvelope } from './http'
-import type { CreateSandboxRequest, Sandbox } from './types'
+import type { CreateSandboxRequest, Sandbox, SandboxMetricsData } from './types'
 
 export async function listSandboxes(): Promise<Sandbox[]> {
   const data = await requestEnvelope<Sandbox[] | undefined>('/sandbox', {
@@ -22,5 +22,15 @@ export async function createSandbox(payload: CreateSandboxRequest = {}): Promise
 export async function deleteSandbox(name: string): Promise<string> {
   return requestEnvelope<string>(`/sandbox/${encodeURIComponent(name)}`, {
     method: 'DELETE',
+  })
+}
+
+export async function getSandboxMetrics(names: string[]): Promise<SandboxMetricsData> {
+  return requestEnvelope<SandboxMetricsData>('/sandbox/metrics', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ names }),
   })
 }

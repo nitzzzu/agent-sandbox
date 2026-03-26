@@ -40,6 +40,13 @@ const (
 	Unready  SandboxState = "unready"
 )
 
+const (
+	DefaultCPU         = "50m"
+	DefaultMemory      = "100Mi"
+	DefaultCPULimit    = "2000m"
+	DefaultMemoryLimit = "4000Mi"
+)
+
 type SandboxBase struct {
 
 	// Optionally give the sandbox a name.
@@ -135,12 +142,10 @@ const (
 	TimeLabel = "sbx-time" // timestamp of creation
 )
 
+// Sandbox values process: GetDefaultSandbox->request overwrite->Make->setDefaultValueOfSandbox
+
 func GetDefaultSandbox() *Sandbox {
 	sb := &Sandbox{
-		CPU:         "50m",
-		Memory:      "100Mi",
-		CPULimit:    "2000m",
-		MemoryLimit: "4000Mi",
 		Timeout:     30 * 60, // 30 minutes
 		IdleTimeout: -1,      // no idle timeout
 		IdlePolicy:  "delete",
@@ -149,8 +154,25 @@ func GetDefaultSandbox() *Sandbox {
 	sb.Object = &SandboxObject{}
 	sb.Object.SetAnnotations(map[string]string{})
 	sb.Object.SetLabels(map[string]string{})
+	sb.Metadata = make(map[string]string)
 
 	return sb
+}
+
+func setDefaultValueOfSandbox(sb *Sandbox) {
+	// check resources is not set and set to default value
+	if sb.CPU == "" {
+		sb.CPU = DefaultCPU
+	}
+	if sb.Memory == "" {
+		sb.Memory = DefaultMemory
+	}
+	if sb.CPULimit == "" {
+		sb.CPULimit = DefaultCPULimit
+	}
+	if sb.MemoryLimit == "" {
+		sb.MemoryLimit = DefaultMemoryLimit
+	}
 }
 
 func (sb *Sandbox) Make() error {
@@ -188,6 +210,7 @@ func (sb *Sandbox) Make() error {
 			return fmt.Errorf("failed to get Template by name %s: %v", sb.Template, err)
 		}
 		t = tpl
+		// TODO request overwrite template's image with sb.Image, currently if template is set, sb.Image will be ignored, we can support overwrite in the future
 		sb.Image = tpl.Image
 		if tpl.Port != 0 {
 			sb.Port = tpl.Port
@@ -204,6 +227,29 @@ func (sb *Sandbox) Make() error {
 	}
 
 	sb.TemplateObj = t
+
+	// merge template metadata and sandbox metadata, sandbox metadata has higher priority
+	if t.Metadata != nil {
+		for k, v := range t.Metadata {
+			if _, ok := sb.Metadata[k]; !ok {
+				sb.Metadata[k] = v
+			}
+		}
+	}
+
+	// use template's resource if not set in sandbox
+	if t.Resources.CPU != "" && sb.CPU == "" {
+		sb.CPU = t.Resources.CPU
+	}
+	if t.Resources.Memory != "" && sb.Memory == "" {
+		sb.Memory = t.Resources.Memory
+	}
+	if t.Resources.CPULimit != "" && sb.CPULimit == "" {
+		sb.CPULimit = t.Resources.CPULimit
+	}
+	if t.Resources.MemoryLimit != "" && sb.MemoryLimit == "" {
+		sb.MemoryLimit = t.Resources.MemoryLimit
+	}
 
 	id := uuid.NewString()
 	// remove '-'
@@ -236,31 +282,10 @@ func (sb *Sandbox) Make() error {
 
 	sb.Status = Creating
 
-	return nil
-}
+	// other default values
+	setDefaultValueOfSandbox(sb)
 
-func (sb *Sandbox) DeepCopy() *Sandbox {
-	if sb == nil {
-		return nil
-	}
-	out := GetDefaultSandbox()
-	out.ID = ""
-	out.Name = ""
-	out.Template = sb.Template
-	out.Timeout = sb.Timeout
-	out.IdlePolicy = sb.IdlePolicy
-	out.EnvVars = sb.EnvVars
-	out.Memory = sb.Memory
-	out.MemoryLimit = sb.MemoryLimit
-	out.CPU = sb.CPU
-	out.CPULimit = sb.CPULimit
-	out.App = sb.App
-	out.Image = sb.Image
-	out.User = sb.User
-	out.Port = sb.Port
-	out.Workdir = sb.Workdir
-	out.Metadata = sb.Metadata
-	return out
+	return nil
 }
 
 type SandboxKube struct {

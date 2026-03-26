@@ -2,12 +2,14 @@ import { Navigate, Outlet, createHashRouter } from 'react-router-dom'
 
 import AppShellLayout from '../layouts/AppShellLayout'
 import { hasAuthToken } from '../lib/auth/token'
+import EventsPage from '../pages/EventsPage'
 import FilesPage from '../pages/FilesPage'
 import LoginPage from '../pages/LoginPage'
 import LogsPage from '../pages/LogsPage'
 import PoolDetailPage from '../pages/PoolDetailPage'
 import PoolListPage from '../pages/PoolListPage'
 import SandboxesPage from '../pages/SandboxesPage'
+import SandboxTemplateConfigPage from '../pages/SandboxTemplateConfigPage'
 import TemplatesConfigPage from '../pages/TemplatesConfigPage'
 import TerminalPage from '../pages/TerminalPage'
 
@@ -62,12 +64,20 @@ export const appRouter = createHashRouter([
             element: <FilesPage />,
           },
           {
+            path: 'events',
+            element: <EventsPage />,
+          },
+          {
             path: 'pool/:poolName',
             element: <PoolDetailPage />,
           },
           {
             path: 'config/templates',
             element: <TemplatesConfigPage />,
+          },
+          {
+            path: 'config/sandbox-template',
+            element: <SandboxTemplateConfigPage />,
           },
         ],
       },

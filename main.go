@@ -62,10 +62,10 @@ func main() {
 		klog.Fatalf("Failed to initialize metrics client: %v", err)
 	}
 
-	//load template for sandbox deployment and pool replicaSet
+	// bootstrap and load runtime configuration from configmap
 	cfg.KubeClient = kubeClient
-	cfg.LoadSandboxRSTemplate()
 	cfg.CheckConfigmap()
+
 	// watch configmap for dynamic update
 	configMapWatcher := configmapinformer.NewInformedWatcher(kubeClient, cfg.SandboxNamespace)
 	configMapWatcher.Watch(config.TemplatesConfigMapName, config.WatchConfigMap())

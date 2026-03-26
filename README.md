@@ -17,18 +17,17 @@ Shell commands etc. with stateful, long-running, multi-session and multi-tenant.
 <h3>Agent-Sandbox UI</h3> 
 <div>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal access Tools for Sandbox etc. <br> ui path is <a href="https://agent-sandbox.domain.com/ui">https://agent-sandbox.domain.com/ui</a>
 </div>
-<div>   
+<div>
 <a href="docs/imgs/uiimg-sbs.png" target="_blank">
-    <img alt="agent-sandbox" src="docs/imgs/uiimg-sbs.png" width="45%"/>
+    <img alt="agent-sandbox" src="docs/imgs/uiimg-sbs.png" width="90%"/>
 </a>
+</div>
+<div>
 <a href="docs/imgs/uiimg-pools.jpg" target="_blank">
     <img alt="agent-sandbox" src="docs/imgs/uiimg-pools.jpg" width="45%"/>
 </a>
 <a href="docs/imgs/uiimg-files.jpg" target="_blank">
     <img alt="agent-sandbox" src="docs/imgs/uiimg-files.jpg" width="45%"/>
-</a>
-<a href="docs/imgs/uiimg-logs.jpg" target="_blank">
-    <img alt="agent-sandbox" src="docs/imgs/uiimg-logs.jpg" width="45%"/>
 </a>
 <a href="docs/imgs/uiimg-terminal.png" target="_blank">
     <img alt="agent-sandbox" src="docs/imgs/uiimg-terminal.png" width="45%"/>

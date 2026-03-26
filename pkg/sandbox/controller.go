@@ -282,6 +282,31 @@ type SandboxLogsResult struct {
 	FetchedAt time.Time `json:"fetchedAt"`
 }
 
+type SandboxEventInvolvedObject struct {
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+	APIVersion string `json:"apiVersion"`
+	FieldPath  string `json:"fieldPath"`
+}
+
+type SandboxEventItem struct {
+	Name           string                     `json:"name"`
+	Reason         string                     `json:"reason"`
+	Type           string                     `json:"type"`
+	Message        string                     `json:"message"`
+	Count          int32                      `json:"count"`
+	EventTime      time.Time                  `json:"eventTime"`
+	FirstTimestamp time.Time                  `json:"firstTimestamp"`
+	LastTimestamp  time.Time                  `json:"lastTimestamp"`
+	InvolvedObject SandboxEventInvolvedObject `json:"involvedObject"`
+}
+
+type SandboxEventsResult struct {
+	Items     []SandboxEventItem `json:"items"`
+	FetchedAt time.Time          `json:"fetchedAt"`
+}
+
 type SandboxTerminalResult struct {
 	Sandbox     string    `json:"sandbox"`
 	Pod         string    `json:"pod"`
@@ -559,6 +584,75 @@ func (s *Controller) StreamSandboxTerminal(ctx context.Context, name string, com
 	return nil
 }
 
+func sandboxEventSortTime(item v1core.Event) time.Time {
+	if !item.EventTime.Time.IsZero() {
+		return item.EventTime.Time
+	}
+	if !item.LastTimestamp.Time.IsZero() {
+		return item.LastTimestamp.Time
+	}
+	if !item.FirstTimestamp.Time.IsZero() {
+		return item.FirstTimestamp.Time
+	}
+	if !item.CreationTimestamp.Time.IsZero() {
+		return item.CreationTimestamp.Time
+	}
+	return time.Time{}
+}
+
+func (s *Controller) ListReplicaSetEvents(name string, limit int64) (*SandboxEventsResult, error) {
+	fieldSelector := "involvedObject.kind=ReplicaSet"
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName != "" {
+		fieldSelector = fmt.Sprintf("%s,involvedObject.name=%s", fieldSelector, trimmedName)
+	}
+
+	items, err := s.kclient.CoreV1().Events(config.Cfg.SandboxNamespace).List(context.TODO(), v1meta.ListOptions{
+		FieldSelector: fieldSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list events: %w", err)
+	}
+
+	sort.Slice(items.Items, func(i, j int) bool {
+		left := sandboxEventSortTime(items.Items[i])
+		right := sandboxEventSortTime(items.Items[j])
+		if left.Equal(right) {
+			return items.Items[i].Name > items.Items[j].Name
+		}
+		return left.After(right)
+	})
+
+	results := make([]SandboxEventItem, 0, len(items.Items))
+	for _, item := range items.Items {
+		results = append(results, SandboxEventItem{
+			Name:           item.Name,
+			Reason:         item.Reason,
+			Type:           item.Type,
+			Message:        item.Message,
+			Count:          item.Count,
+			EventTime:      item.EventTime.Time.UTC(),
+			FirstTimestamp: item.FirstTimestamp.Time.UTC(),
+			LastTimestamp:  item.LastTimestamp.Time.UTC(),
+			InvolvedObject: SandboxEventInvolvedObject{
+				Kind:       item.InvolvedObject.Kind,
+				Name:       item.InvolvedObject.Name,
+				Namespace:  item.InvolvedObject.Namespace,
+				APIVersion: item.InvolvedObject.APIVersion,
+				FieldPath:  item.InvolvedObject.FieldPath,
+			},
+		})
+		if int64(len(results)) >= limit {
+			break
+		}
+	}
+
+	return &SandboxEventsResult{
+		Items:     results,
+		FetchedAt: time.Now().UTC(),
+	}, nil
+}
+
 func (s *Controller) GetSandboxLogs(name string, tailLines int64) (*SandboxLogsResult, error) {
 	pods := s.GetInstances(name)
 	if len(pods) == 0 {
@@ -626,20 +720,67 @@ func (s *Controller) ExecuteSandboxTerminal(name string, command []string) (*San
 	}, nil
 }
 
-func (s *Controller) SandboxMetrics(names []string) (data map[string]v1beta1.ContainerMetrics, err error) {
-	selectorString := fmt.Sprintf("%s in (%s)", TPLLabel, strings.Join(names, ","))
-	podMetricsList, err := s.MetricsClient.MetricsV1beta1().PodMetricses(config.Cfg.SandboxNamespace).List(context.TODO(), v1meta.ListOptions{LabelSelector: selectorString})
+type SandboxMetricsItem struct {
+	Sandbox     string    `json:"sandbox"`
+	Pod         string    `json:"pod"`
+	CPUMilli    int64     `json:"cpuMilli"`
+	MemoryBytes int64     `json:"memoryBytes"`
+	MemoryMB    float64   `json:"memoryMB"`
+	SampledAt   time.Time `json:"sampledAt"`
+}
 
+func pickSandboxContainerMetrics(podMetrics v1beta1.PodMetrics) (v1beta1.ContainerMetrics, bool) {
+	for _, container := range podMetrics.Containers {
+		if container.Name == "sandbox" {
+			return container, true
+		}
+	}
+	if len(podMetrics.Containers) == 0 {
+		return v1beta1.ContainerMetrics{}, false
+	}
+	return podMetrics.Containers[0], true
+}
+
+func (s *Controller) SandboxMetrics(names []string) (data map[string]SandboxMetricsItem, err error) {
+	data = make(map[string]SandboxMetricsItem)
+	if len(names) == 0 {
+		return data, nil
+	}
+
+	selectorString := fmt.Sprintf("sandbox in (%s)", strings.Join(names, ","))
+	podMetricsList, err := s.MetricsClient.MetricsV1beta1().PodMetricses(config.Cfg.SandboxNamespace).List(context.TODO(), v1meta.ListOptions{LabelSelector: selectorString})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pod metrics: %w", err)
 	}
 
-	data = make(map[string]v1beta1.ContainerMetrics)
 	for _, podMetrics := range podMetricsList.Items {
-		if len(podMetrics.Containers) == 0 {
+		sandboxName := strings.TrimSpace(podMetrics.Labels["sandbox"])
+		if sandboxName == "" {
 			continue
 		}
-		data[podMetrics.Name] = podMetrics.Containers[0]
+
+		container, ok := pickSandboxContainerMetrics(podMetrics)
+		if !ok {
+			continue
+		}
+
+		cpu := container.Usage[v1core.ResourceCPU]
+		memory := container.Usage[v1core.ResourceMemory]
+		sampledAt := podMetrics.Timestamp.Time.UTC()
+		item := SandboxMetricsItem{
+			Sandbox:     sandboxName,
+			Pod:         podMetrics.Name,
+			CPUMilli:    cpu.MilliValue(),
+			MemoryBytes: memory.Value(),
+			MemoryMB:    float64(memory.Value()) / (1024.0 * 1024.0),
+			SampledAt:   sampledAt,
+		}
+
+		existing, exists := data[sandboxName]
+		if exists && existing.SampledAt.After(item.SampledAt) {
+			continue
+		}
+		data[sandboxName] = item
 	}
 
 	return data, nil

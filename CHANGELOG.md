@@ -28,3 +28,9 @@ V0.3.1 - 2026-03-12
 V0.4.0 - 2026-03-19
 - Add UI for sandbox management, which can view sandbox instances, templates, and logs.
 -------------------------- 
+V0.4.1 - 2026-03-26
+- Add sandboxes events and metrics, which can monitor the status and performance of sandbox instances.
+- Add template resources config for sandbox instance.
+- Add template metadata config, which can customize sandbox-template specific config for different use cases with go-template format, e.g. #5.
+- Add UI for sandbox-template config, which can view and edit the sandbox-template(ReplicasSet) config in UI.
+-------------------------- 

@@ -70,8 +70,10 @@ func (ahh *ApiHttpHandler) regHandlers() {
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/sandbox", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ListSandbox) })
 	ahh.mux.HandleFunc(fmt.Sprintf("DELETE %s/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.DelSandbox) })
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.GetSandbox) })
+	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/sandbox/metrics", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.SandboxMetrics) })
 
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/logs/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.GetSandboxLogs) })
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/events", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ListSandboxEvents) })
 
 	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/terminal/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ExecuteSandboxTerminal) })
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/terminal/sandbox/{name}/ws", config.Cfg.APIBaseURL), sbHeader.StreamSandboxTerminalWS)
@@ -84,6 +86,8 @@ func (ahh *ApiHttpHandler) regHandlers() {
 	// Rest API for config
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/config/templates", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.GetTemplatesConfig) })
 	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/config/templates", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.SaveTemplatesConfig) })
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/config/sandbox-template", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.GetSandboxTemplateConfig) })
+	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/config/sandbox-template", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.SaveSandboxTemplateConfig) })
 
 	// Rest API for pool management
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/pool", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ListPool) })

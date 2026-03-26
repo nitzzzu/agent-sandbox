@@ -14,6 +14,10 @@ export type Sandbox = {
   app?: string
   timeout?: number
   created_at?: string
+  cpu?: string
+  memory?: string
+  cpu_limit?: string
+  memory_limit?: string
   metadata?: Record<string, string>
 }
 
@@ -24,12 +28,20 @@ export type CreateSandboxRequest = {
   timeout?: number
 }
 
+export type TemplateResources = {
+  cpu?: string
+  memory?: string
+  cpuLimit?: string
+  memoryLimit?: string
+}
+
 export type TemplatePool = {
   size?: number
   readySize?: number
   probePort?: number
   warmupCmd?: string
   startupCmd?: string
+  resources?: TemplateResources
 }
 
 export type Template = {
@@ -38,7 +50,9 @@ export type Template = {
   image?: string
   port?: number
   type?: string
+  metadata?: Record<string, string>
   noStartupProbe?: boolean
+  resources?: TemplateResources
   pool?: TemplatePool
   description?: string
 }
@@ -138,4 +152,42 @@ export type SandboxFileDeleteData = {
 export type SandboxFileDownloadResult = {
   blob: Blob
   fileName: string
+}
+
+export type SandboxMetricsItem = {
+  sandbox: string
+  pod: string
+  cpuMilli: number
+  memoryBytes: number
+  memoryMB: number
+  sampledAt: string
+}
+
+export type SandboxMetricsData = {
+  items: Record<string, SandboxMetricsItem>
+}
+
+export type SandboxEventInvolvedObject = {
+  kind: string
+  name: string
+  namespace: string
+  apiVersion: string
+  fieldPath: string
+}
+
+export type SandboxEventItem = {
+  name: string
+  reason: string
+  type: string
+  message: string
+  count: number
+  eventTime: string
+  firstTimestamp: string
+  lastTimestamp: string
+  involvedObject: SandboxEventInvolvedObject
+}
+
+export type SandboxEventsData = {
+  items: SandboxEventItem[]
+  fetchedAt: string
 }

@@ -74,7 +74,7 @@ spec:
       containers:
         - env:
             - name: VERSION
-              value: "0.4.0"
+              value: "0.4.1"
             - name: KUBERNETES_MIN_VERSION
               value: "1.26.0"
             - name: SANDBOX_NAMESPACE
@@ -82,7 +82,7 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.namespace
-          image: ghcr.io/agent-sandbox/agent-sandbox:0.4.0
+          image: ghcr.io/agent-sandbox/agent-sandbox:0.4.1
           imagePullPolicy: IfNotPresent
           livenessProbe:
             failureThreshold: 5

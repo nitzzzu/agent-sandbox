@@ -20,6 +20,9 @@ spec:
         sandbox: {{.Sandbox.Name}}
         owner: agent-sandbox
     spec:
+{{ if index .Sandbox.Metadata "runtimeClassName" }}
+      runtimeClassName: {{.Sandbox.Metadata.runtimeClassName}}
+{{ end }}
       containers:
         - name: sandbox
           image: {{.Sandbox.Image}}
@@ -40,6 +43,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+  {{if .Sandbox.EnvVars}}
+      {{range $name, $value := .Sandbox.EnvVars }}
+            - name: {{$name}}
+              value: {{printf "%q" $value}}
+      {{end }}
+  {{end}}
           resources:
             requests:
               cpu: {{.Sandbox.CPU}}
