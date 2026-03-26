@@ -41,6 +41,8 @@ Shell commands etc. with stateful, long-running, multi-session and multi-tenant.
 </div>
 </div>
 
+<hr/>
+
 <div align="center">
 <video src="https://github.com/user-attachments/assets/819c8534-a759-4ad0-9be5-7f95e6757168" autoplay loop muted playsinline >
     Your browser does not support the video tag.
