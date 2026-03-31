@@ -582,6 +582,20 @@ export default function TemplatesConfigPage() {
 
                         <label className="form-control w-full md:col-span-2">
                           <div className="label">
+                            <span className="label-text">Args (one per line)</span>
+                          </div>
+                          <textarea
+                            className="textarea textarea-sm textarea-bordered w-full font-mono text-xs"
+                            value={(selectedTemplate.args ?? []).join('\n')}
+                            onChange={(event) => {
+                              const args = event.target.value.split('\n').map((s) => s.trim()).filter(Boolean)
+                              updateSelectedTemplate((prev) => ({ ...prev, args: args.length > 0 ? args : undefined }))
+                            }}
+                          />
+                        </label>
+
+                        <label className="form-control w-full md:col-span-2">
+                          <div className="label">
                             <span className="label-text">Metadata (key=value, one per line, e.g. runtimeClassName=gvisor, no quotation marks)</span>
                           </div>
                           <textarea
