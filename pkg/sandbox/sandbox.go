@@ -228,6 +228,11 @@ func (sb *Sandbox) Make() error {
 
 	sb.TemplateObj = t
 
+	// apply template args if sandbox has none
+	if len(sb.Args) == 0 && len(t.Args) > 0 {
+		sb.Args = t.Args
+	}
+
 	// merge template metadata and sandbox metadata, sandbox metadata has higher priority
 	if t.Metadata != nil {
 		for k, v := range t.Metadata {

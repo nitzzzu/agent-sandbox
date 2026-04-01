@@ -56,6 +56,7 @@ type Template struct {
 	Type           string            `json:"type" required:"false" description:"dynamic or static, default is static, dynamic means template is dynamic by regexp"`
 	Metadata       map[string]string `json:"metadata" required:"false"`
 	NoStartupProbe bool              `json:"noStartupProbe" required:"false"`
+	Args           []string          `json:"args" required:"false"`
 	Resources      Resources         `json:"resources"  required:"false"`
 	Pool           TemplatePool      `json:"pool" required:"false"`
 	Description    string            `json:"description" required:"false"`
