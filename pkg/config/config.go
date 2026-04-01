@@ -32,6 +32,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const Version = "0.4.3"
+
+const SystemToken = "sys-2492a85b10ed4cb083b2c76b181eac96"
+
 type Resources struct {
 	CPU         string `json:"cpu"`
 	Memory      string `json:"memory"`
@@ -84,7 +88,7 @@ type Config struct {
 	SandboxDefaultImage        string `split_words:"true" default:"ghcr.io/agent-infra/sandbox:latest" required:"false"`
 	SandboxDefaultTemplate     string `split_words:"true" default:"aio" required:"false"`
 
-	Version string `split_words:"true" default:"0.0.1" required:"false"`
+	ConfigmapName string `split_words:"true" default:"agent-sandbox" required:"false"`
 }
 
 func InitConfig() *Config {
@@ -95,7 +99,7 @@ func InitConfig() *Config {
 
 	cfg.APIBaseURL = "/api/" + cfg.APIVersion
 
-	cfg.APITokensRaw = "sys-2492a85b10ed4cb083b2c76b181eac96," + cfg.APITokensRaw
+	cfg.APITokensRaw = SystemToken + "," + cfg.APITokensRaw
 	tokens := strings.Split(cfg.APITokensRaw, ",")
 	//valid tokens
 	var validTokens []string
@@ -209,12 +213,12 @@ func (c *Config) ShouldLoadTemplates() {
 func (c *Config) SaveTemplatesToCM(templatesContent string) error {
 	cmClient := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace)
 
-	existCm, err := cmClient.Get(context.TODO(), TemplatesConfigMapName, metav1.GetOptions{})
+	existCm, err := cmClient.Get(context.TODO(), Cfg.ConfigmapName, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      TemplatesConfigMapName,
+					Name:      Cfg.ConfigmapName,
 					Namespace: c.SandboxNamespace,
 				},
 				Data: map[string]string{
@@ -239,7 +243,7 @@ func (c *Config) SaveTemplatesToCM(templatesContent string) error {
 func (c *Config) ReadTemplatesFromCM() (content string, err error) {
 	templatesContent := ""
 
-	existCm, err := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace).Get(context.TODO(), TemplatesConfigMapName, metav1.GetOptions{})
+	existCm, err := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace).Get(context.TODO(), Cfg.ConfigmapName, metav1.GetOptions{})
 	if err != nil && errors.IsNotFound(err) {
 		klog.Info("templates configmap not found, return empty content")
 		return templatesContent, nil
@@ -254,12 +258,12 @@ func (c *Config) ReadTemplatesFromCM() (content string, err error) {
 func (c *Config) SaveSandboxTemplateToCM(content string) error {
 	cmClient := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace)
 
-	existCm, err := cmClient.Get(context.TODO(), TemplatesConfigMapName, metav1.GetOptions{})
+	existCm, err := cmClient.Get(context.TODO(), Cfg.ConfigmapName, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      TemplatesConfigMapName,
+					Name:      Cfg.ConfigmapName,
 					Namespace: c.SandboxNamespace,
 				},
 				Data: map[string]string{
@@ -284,7 +288,7 @@ func (c *Config) SaveSandboxTemplateToCM(content string) error {
 func (c *Config) ReadSandboxTemplateFromCM() (content string, err error) {
 	sandboxTemplateContent := ""
 
-	existCm, err := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace).Get(context.TODO(), TemplatesConfigMapName, metav1.GetOptions{})
+	existCm, err := c.KubeClient.CoreV1().ConfigMaps(c.SandboxNamespace).Get(context.TODO(), Cfg.ConfigmapName, metav1.GetOptions{})
 	if err != nil && errors.IsNotFound(err) {
 		klog.Info("sandbox template configmap not found, return empty content")
 		return sandboxTemplateContent, nil

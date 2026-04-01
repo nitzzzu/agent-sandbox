@@ -68,7 +68,7 @@ func main() {
 
 	// watch configmap for dynamic update
 	configMapWatcher := configmapinformer.NewInformedWatcher(kubeClient, cfg.SandboxNamespace)
-	configMapWatcher.Watch(config.TemplatesConfigMapName, config.WatchConfigMap())
+	configMapWatcher.Watch(config.Cfg.ConfigmapName, config.WatchConfigMap())
 	if err := configMapWatcher.Start(rootCtx.Done()); err != nil {
 		klog.Fatal("Failed to start configuration manager", zap.Error(err))
 	}

@@ -7,8 +7,12 @@ metadata:
     sandbox-data:  |
       {{.RawData}}
   labels:
-    sandbox: {{.Sandbox.Name}}
     owner: agent-sandbox
+    sandbox: {{.Sandbox.Name}}
+    sbx-id: {{.Sandbox.ID}}
+    sbx-user: {{.Sandbox.User}}
+    sbx-template: {{.Sandbox.Template}}
+    sbx-pool: {{.Sandbox.IsPool}}
 spec:
   replicas: 1
   selector:
@@ -17,8 +21,12 @@ spec:
   template:
     metadata:
       labels:
-        sandbox: {{.Sandbox.Name}}
         owner: agent-sandbox
+        sandbox: {{.Sandbox.Name}}
+        sbx-id: {{.Sandbox.ID}}
+        sbx-user: {{.Sandbox.User}}
+        sbx-template: {{.Sandbox.Template}}
+        sbx-pool: {{.Sandbox.IsPool}}
     spec:
 {{ if index .Sandbox.Metadata "runtimeClassName" }}
       runtimeClassName: {{.Sandbox.Metadata.runtimeClassName}}

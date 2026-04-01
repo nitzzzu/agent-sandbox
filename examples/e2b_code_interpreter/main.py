@@ -5,13 +5,13 @@ e2b_hack.local()
 
 
 # sandbox id for tests
-test_id = "578c9a04883047438f28387ed6bdd1bd"
+test_id = "4943125c14da4de98f423c052c2012ec"
 
 def create_test():
     # Default:
     # TemplateID = "code-interpreter-v1"
     # Timeout = {int} 300
-    sbx = Sandbox.create()
+    sbx = Sandbox.create(template="template-demo")
 
     # Retrieve sandbox information.
     info = sbx.get_info()
@@ -74,8 +74,8 @@ def run_code():
     sbx=Sandbox.connect(test_id)
     print(f"sandbox id: {sbx.sandbox_id}")
 
-    files = sbx.files.list("/home/user")
-    print(files)
+    # files = sbx.files.list("/home/user")
+    # print(files)
 
     execution = sbx.run_code("print(1+1)")  # Execute Python inside the sandbox
     print(execution.logs)

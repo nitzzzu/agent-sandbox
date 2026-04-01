@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/activator"
+	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	"github.com/agent-sandbox/agent-sandbox/pkg/sandbox"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,7 +48,7 @@ func (s *Scaler) ScalingDownOfIdleTimeout() {
 
 		// If no LastRequestTime event found, use creation time as fallback
 		if lastRequestTime == 0 {
-			createTime := sb.GetCreationTimestamp()
+			createTime := sb.CreatedAt
 			lastRequestTime = createTime.Unix()
 			klog.V(2).Infof("Sandbox %v has no LastRequestTime event, using creation time %v", sb.Name, createTime)
 		}
@@ -80,7 +81,7 @@ func (s *Scaler) ScalingDownOfIdleTimeout() {
 				},
 				ObjectMeta: v1meta.ObjectMeta{
 					Name:      sb.Name,
-					Namespace: sb.GetNamespace(),
+					Namespace: config.Cfg.SandboxNamespace,
 				},
 			}
 			r.Event(obj, corev1.EventTypeNormal, "ScaleDownIdleTimeout",

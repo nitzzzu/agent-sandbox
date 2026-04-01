@@ -1,4 +1,4 @@
-import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
+import { CSSProperties, ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { createSandbox, deleteSandbox, getSandboxMetrics, listSandboxes } from '../lib/api/sandbox'
@@ -18,6 +18,8 @@ type SandboxMetricsState = {
   item?: SandboxMetricsItem
 }
 
+type SandboxSortKey = 'created-desc' | 'created-asc' | 'name-asc' | 'name-desc'
+
 const initialCreateFormState: CreateFormState = {
   name: '',
   template: '',
@@ -26,6 +28,7 @@ const initialCreateFormState: CreateFormState = {
 }
 
 const metricsBatchSize = 10
+const refreshIntervalOptions = [2000, 5000, 10000, 30000]
 
 function formatCreatedAt(value?: string): string {
   if (!value) {
@@ -38,6 +41,19 @@ function formatCreatedAt(value?: string): string {
   }
 
   return date.toLocaleString()
+}
+
+function getCreatedTimestamp(value?: string): number {
+  if (!value) {
+    return 0
+  }
+
+  const parsed = Date.parse(value)
+  if (Number.isNaN(parsed)) {
+    return 0
+  }
+
+  return parsed
 }
 
 function buildCreatePayload(form: CreateFormState): CreateSandboxRequest {
@@ -164,14 +180,14 @@ function renderMetricFallback(metrics: SandboxMetricsState | undefined, text: st
 }
 
 function wrapWithResourcesTooltip(content: ReactNode, metrics: SandboxMetricsState | undefined, sandbox: Sandbox) {
-    const item = metrics?.status === 'ready' ? metrics.item : undefined
+  const item = metrics?.status === 'ready' ? metrics.item : undefined
 
   return (
     <div className="tooltip tooltip-left">
-        <div className="tooltip-content">
-            CPU:  {sandbox.cpu || '-'} - {sandbox.cpu_limit || '-'}, Usage:  {item ? `${item.cpuMilli}m` : '-'}<br/>
-            Memory:  {sandbox.memory || '-'} - {sandbox.memory_limit || '-'}, Usage: {item ? `${Math.round(item.memoryMB)}MiB` : '-'}
-        </div>
+      <div className="tooltip-content">
+        CPU:  {sandbox.cpu || '-'} - {sandbox.cpu_limit || '-'}, Usage:  {item ? `${item.cpuMilli}m` : '-'}<br />
+        Memory:  {sandbox.memory || '-'} - {sandbox.memory_limit || '-'}, Usage: {item ? `${Math.round(item.memoryMB)}MiB` : '-'}
+      </div>
       <div>{content}</div>
     </div>
   )
@@ -247,12 +263,24 @@ export default function SandboxesPage() {
   const [formState, setFormState] = useState<CreateFormState>(initialCreateFormState)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [metricsByName, setMetricsByName] = useState<Record<string, SandboxMetricsState>>({})
+  const [isAutoRefresh, setIsAutoRefresh] = useState(true)
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(5000)
+  const [sortKey, setSortKey] = useState<SandboxSortKey>('created-desc')
 
   const inflightNamesRef = useRef<Set<string>>(new Set())
   const requestSerialByNameRef = useRef<Record<string, number>>({})
   const fetchDebounceTimerRef = useRef<number | null>(null)
+  const listRequestInFlightRef = useRef(false)
+  const deletingNameRef = useRef<string | null>(null)
 
-  const refreshSandboxes = async (options?: { keepMessages?: boolean }) => {
+  deletingNameRef.current = deletingName
+
+  const refreshSandboxes = useCallback(async (options?: { keepMessages?: boolean }) => {
+    if (listRequestInFlightRef.current) {
+      return
+    }
+
+    listRequestInFlightRef.current = true
     setIsListLoading(true)
     setPageError('')
 
@@ -268,13 +296,31 @@ export default function SandboxesPage() {
       const message = error instanceof Error ? error.message : 'Failed to load sandboxes'
       setPageError(message)
     } finally {
+      listRequestInFlightRef.current = false
       setIsListLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     void refreshSandboxes()
-  }, [])
+  }, [refreshSandboxes])
+
+  useEffect(() => {
+    if (!isAutoRefresh) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      if (deletingNameRef.current) {
+        return
+      }
+      void refreshSandboxes({ keepMessages: true })
+    }, refreshIntervalMs)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [isAutoRefresh, refreshIntervalMs, refreshSandboxes])
 
   useEffect(() => {
     const existingNames = new Set(sandboxes.map((sandbox) => sandbox.name?.trim() ?? '').filter((name) => name !== ''))
@@ -397,6 +443,30 @@ export default function SandboxesPage() {
     }
   }, [metricsByName, sandboxes])
 
+  const sortedSandboxes = useMemo(() => {
+    const next = [...sandboxes]
+
+    next.sort((a, b) => {
+      if (sortKey === 'created-desc') {
+        return getCreatedTimestamp(b.created_at) - getCreatedTimestamp(a.created_at)
+      }
+
+      if (sortKey === 'created-asc') {
+        return getCreatedTimestamp(a.created_at) - getCreatedTimestamp(b.created_at)
+      }
+
+      const nameA = (a.name ?? '').toLocaleLowerCase()
+      const nameB = (b.name ?? '').toLocaleLowerCase()
+      if (sortKey === 'name-asc') {
+        return nameA.localeCompare(nameB)
+      }
+
+      return nameB.localeCompare(nameA)
+    })
+
+    return next
+  }, [sandboxes, sortKey])
+
   const isDeleteDisabled = (sandboxName: string) => !sandboxName || Boolean(deletingName)
 
   const handleDeleteClick = (sandboxName?: string) => {
@@ -467,6 +537,17 @@ export default function SandboxesPage() {
     }
   }
 
+  const handleRefreshIntervalChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const parsed = Number.parseInt(event.target.value, 10)
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      setRefreshIntervalMs(parsed)
+    }
+  }
+
+  const handleSortChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setSortKey(event.target.value as SandboxSortKey)
+  }
+
   return (
     <>
       <header className="card border border-base-300 bg-base-100 shadow-sm">
@@ -500,7 +581,41 @@ export default function SandboxesPage() {
           <div className="card-body gap-4">
             <div className="flex items-center justify-between gap-2">
               <h3 className="card-title text-lg">Sandboxes List</h3>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="label cursor-pointer gap-2 py-0">
+                  <span className="label-text text-sm">Auto Refresh</span>
+                  <input
+                    className="toggle toggle-sm"
+                    type="checkbox"
+                    checked={isAutoRefresh}
+                    onChange={() => {
+                      setIsAutoRefresh((prev) => !prev)
+                    }}
+                    disabled={Boolean(deletingName)}
+                  />
+                </label>
+
+                <label className="flex items-center gap-2">
+                  <span className="text-sm">Interval</span>
+                  <select className="select select-sm select-bordered" value={String(refreshIntervalMs)} onChange={handleRefreshIntervalChange} disabled={!isAutoRefresh || Boolean(deletingName)}>
+                    {refreshIntervalOptions.map((interval) => (
+                      <option key={interval} value={interval}>
+                        {interval / 1000}s
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex items-center gap-2">
+                  <span className="text-sm">Sort</span>
+                  <select className="select select-sm select-bordered" value={sortKey} onChange={handleSortChange}>
+                    <option value="created-desc">Created (newest first)</option>
+                    <option value="created-asc">Created (oldest first)</option>
+                    <option value="name-asc">Name (A-Z)</option>
+                    <option value="name-desc">Name (Z-A)</option>
+                  </select>
+                </label>
+
                 <button
                   className={`btn btn-sm btn-outline ${isListLoading ? 'btn-disabled' : ''}`}
                   type="button"
@@ -549,14 +664,14 @@ export default function SandboxesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sandboxes.length === 0 ? (
+                  {sortedSandboxes.length === 0 ? (
                     <tr>
                       <td className="text-center text-base-content/70" colSpan={10}>
                         {isListLoading ? 'Loading sandboxes...' : 'No sandboxes found.'}
                       </td>
                     </tr>
                   ) : (
-                    sandboxes.map((sandbox, index) => {
+                    sortedSandboxes.map((sandbox, index) => {
                       const sandboxName = sandbox.name ?? ''
                       const isDeleting = deletingName === sandboxName
                       const metrics = sandboxName ? metricsByName[sandboxName] : undefined
@@ -583,8 +698,8 @@ export default function SandboxesPage() {
                               '-'
                             )}
                           </td>
-                          <td style={{fontSize:"10px"}}>{renderCpuCell(metrics, sandbox)}</td>
-                            <td style={{fontSize:"10px"}}>{renderMemoryCell(metrics, sandbox)}</td>
+                          <td style={{ fontSize: '10px' }}>{renderCpuCell(metrics, sandbox)}</td>
+                          <td style={{ fontSize: '10px' }}>{renderMemoryCell(metrics, sandbox)}</td>
                           <td>{typeof sandbox.timeout === 'number' ? `${sandbox.timeout}s` : '-'}</td>
                           <td>{formatCreatedAt(sandbox.created_at)}</td>
                           <td className="text-right">

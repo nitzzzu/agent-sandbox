@@ -34,6 +34,7 @@ import (
 	v1core "k8s.io/api/core/v1"
 	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
@@ -65,7 +66,7 @@ func NewController(ctx context.Context, cfg *rest.Config, pl *PoolManager) *Cont
 }
 
 func (s *Controller) GetRSByID(id string) (*v1.ReplicaSet, error) {
-	selector := labels.Set{IDLabel: id}.AsSelector()
+	selector := labels.Set{IDLabel: id, PoolLabel: "false"}.AsSelector()
 	rss, err := rsclient.Get(s.rootCtx).Lister().List(selector)
 	if err != nil {
 		klog.Errorf("Failed to list rs, id %s error %v", id, err)
@@ -104,7 +105,7 @@ func (s *Controller) GetSandbox(rs *v1.ReplicaSet) (*Sandbox, error) {
 	raw := rs.Annotations["sandbox-data"]
 	sb := &Sandbox{}
 	json.Unmarshal([]byte(raw), sb)
-	sb.Object = rs.DeepCopy()
+	sb.ReplicaSet = rs.DeepCopy()
 
 	// Set the status of the sandbox
 	replicas := *rs.Spec.Replicas
@@ -168,7 +169,7 @@ func (s *Controller) DoList(selector labels.Selector) ([]*Sandbox, error) {
 		raw := rs.Annotations["sandbox-data"]
 		sb := &Sandbox{}
 		json.Unmarshal([]byte(raw), sb)
-		sb.Object = rs.DeepCopy()
+		sb.ReplicaSet = rs.DeepCopy()
 		// Set the status of the sandbox
 		replicas := *rs.Spec.Replicas
 		if replicas == rs.Status.ReadyReplicas {
@@ -190,34 +191,41 @@ func IsAcquireError(err error) bool {
 	return err != nil
 }
 
+var CreateRetry = wait.Backoff{
+	Steps:    3,
+	Duration: 50 * time.Millisecond,
+	Factor:   1.0,
+	Jitter:   1.0,
+}
+
 func (s *Controller) Create(sb *Sandbox) (*Sandbox, error) {
 	// retry to AcquirePoolReplicaSet if error is conflict,
 	//because multiple sandboxes may try to acquire the same pool replicaset
 	acquired := &v1.ReplicaSet{}
 	fromPool := false
-	err := retry.OnError(retry.DefaultRetry, IsAcquireError, func() error {
+	err := retry.OnError(CreateRetry, IsAcquireError, func() error {
 		var err error
 		acquired, fromPool, err = s.pl.AcquirePoolReplicaSet(sb)
 		return err
 	})
 
 	if err != nil {
-		klog.Errorf("failed to acquire pool replica set, reqeust %v, error %v", sb, err)
-		return nil, err
+		klog.Errorf("failed to create sandbox, error=%v, sandbox=%v", err, sb)
+		return nil, fmt.Errorf("failed to create sandbox, error=%v, sandbox=%v", err, sb)
 	}
 
-	sb.Object = acquired
+	sb.ReplicaSet = acquired
 
 	// Wait for ReplicaSet to be ready
 	if fromPool && sb.TemplateObj.Pool.StartupCmd != "" {
-		if perr := s.StartupAndWaitForPoolReplicaSetReady(sb, false); perr != nil {
+		if perr := s.StartupPoolReplicaSet(sb, false); perr != nil {
 			klog.Errorf("timeout waiting for sandbox from pool to be ready: %v, instance not ready yet, please get it leater or check pod status", perr)
-			return sb, nil
+			return sb, perr
 		}
 	} else {
 		if perr := s.WaitForReplicaSetReady(sb); perr != nil {
 			klog.Errorf("timeout waiting for sandbox to be ready: %v, instance not ready yet, please get it leater or check pod status", perr)
-			return sb, nil
+			return sb, perr
 		}
 	}
 

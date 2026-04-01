@@ -73,8 +73,6 @@ spec:
       serviceAccountName: agent-sandbox
       containers:
         - env:
-            - name: VERSION
-              value: "0.4.1"
             - name: KUBERNETES_MIN_VERSION
               value: "1.26.0"
             - name: SANDBOX_NAMESPACE

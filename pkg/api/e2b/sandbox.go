@@ -307,7 +307,7 @@ func (a *Handler) convertToE2BSandbox(sb *sandbox.Sandbox) *api.Sandbox {
 	apiSbx.MemoryMB = rs.MemoryMB
 	apiSbx.DiskSizeMB = rs.DiskSizeMB
 
-	apiSbx.StartedAt = sb.GetCreationTimestamp().Time
+	apiSbx.StartedAt = sb.CreatedAt
 
 	apiSbx.State = api.Running
 	if sb.Status != "" {

@@ -63,35 +63,6 @@ func buildReplicaSet(sb *Sandbox) (*v1.ReplicaSet, error) {
 		return nil, fmt.Errorf("unmarshal template fail: %v", err)
 	}
 
-	rsAnns := rsObj.GetAnnotations()
-	rsLbs := rsObj.GetLabels()
-	for k, v := range tplData.Sandbox.GetAnnotations() {
-		rsAnns[k] = v
-	}
-	for k, v := range tplData.Sandbox.GetLabels() {
-		rsLbs[k] = v
-	}
-	rsObj.SetAnnotations(rsAnns)
-	rsObj.SetLabels(rsLbs)
-
-	// Set annotations and labels to pod template
-	podAnns := rsObj.Spec.Template.GetAnnotations()
-	podLbs := rsObj.Spec.Template.GetLabels()
-	if podAnns == nil {
-		podAnns = make(map[string]string)
-	}
-	if podLbs == nil {
-		podLbs = make(map[string]string)
-	}
-	for k, v := range rsAnns {
-		podAnns[k] = v
-	}
-	for k, v := range rsLbs {
-		podLbs[k] = v
-	}
-	rsObj.Spec.Template.SetAnnotations(podAnns)
-	rsObj.Spec.Template.SetLabels(podLbs)
-
 	// set startupProbe port to pool probe port if is pool rs
 	if sb.IsPool {
 		container := rsObj.Spec.Template.Spec.Containers[0]
@@ -124,8 +95,8 @@ func (s *Controller) WaitForReplicaSetReady(sb *Sandbox) error {
 	})
 }
 
-// StartupAndWaitForPoolReplicaSetReady waits for a ReplicaSet to become ready by executing a command in the pod and checking the port is listening
-func (s *Controller) StartupAndWaitForPoolReplicaSetReady(sb *Sandbox, checkReady bool) error {
+// StartupPoolReplicaSet waits for a ReplicaSet to become ready by executing a command in the pod and checking the port is listening
+func (s *Controller) StartupPoolReplicaSet(sb *Sandbox, checkReady bool) error {
 	selector := labels.Set{
 		"sandbox": sb.Name,
 	}.AsSelector()
@@ -151,6 +122,8 @@ func (s *Controller) StartupAndWaitForPoolReplicaSetReady(sb *Sandbox, checkRead
 		return err
 	}
 
+	// if checkReady is false, skip checking port listening,
+	// since some template startup.sh have ready check in it.
 	if !checkReady {
 		return nil
 	}

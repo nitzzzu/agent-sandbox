@@ -69,7 +69,6 @@ func (a *Activator) RecordLastEvent(eventType string, name string) {
 	lastAt, ok := a.lastEventRecordAt[cacheKey]
 	if ok && now.Sub(lastAt) < recordEventInterval {
 		a.lastEventRecordMux.Unlock()
-		klog.V(2).Infof("skip recording event %s for sandbox %s: throttled", eventType, name)
 		return
 	}
 	a.lastEventRecordAt[cacheKey] = now

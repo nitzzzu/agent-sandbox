@@ -18,15 +18,12 @@ package sandbox
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
+	"github.com/google/uuid"
+	v1 "k8s.io/api/apps/v1"
 )
 
 // Defines values for SandboxState.
@@ -56,20 +53,12 @@ type SandboxBase struct {
 	Template string `json:"template,omitempty" required:"false" jsonschema:"The sandbox Template name."`
 }
 
-type SandboxObject struct {
-	metav1.TypeMeta
-	metav1.ObjectMeta
-}
-
-func (in *SandboxObject) DeepCopyObject() runtime.Object {
-	return in
-}
-
 type Sandbox struct {
 	SandboxBase
 
 	// For K8s object metadata access
-	metav1.Object `json:"-"`
+	//metav1.Object `json:"-"`
+	ReplicaSet *v1.ReplicaSet `json:"-"`
 
 	User string `json:"-"`
 
@@ -139,7 +128,6 @@ const (
 	UserLabel = "sbx-user"
 	TPLLabel  = "sbx-template"
 	PoolLabel = "sbx-pool" // "true" indicates this is a pool replicaset
-	TimeLabel = "sbx-time" // timestamp of creation
 )
 
 // Sandbox values process: GetDefaultSandbox->request overwrite->Make->setDefaultValueOfSandbox
@@ -151,15 +139,31 @@ func GetDefaultSandbox() *Sandbox {
 		IdlePolicy:  "delete",
 		Port:        8080,
 	}
-	sb.Object = &SandboxObject{}
-	sb.Object.SetAnnotations(map[string]string{})
-	sb.Object.SetLabels(map[string]string{})
+	sb.ReplicaSet = &v1.ReplicaSet{}
+	sb.ReplicaSet.SetAnnotations(map[string]string{})
+	sb.ReplicaSet.SetLabels(map[string]string{})
 	sb.Metadata = make(map[string]string)
 
 	return sb
 }
 
-func setDefaultValueOfSandbox(sb *Sandbox) {
+func validAndRestValueOfSandbox(sb *Sandbox) {
+	// one day max
+	maxTimeout := 60 * 60 * 24
+	if sb.Timeout >= maxTimeout {
+		sb.Timeout = maxTimeout
+	}
+
+	// default timeout, since int default is 0 when not set, so we set it to 30 minutes, E2B default is 300s
+	if sb.Timeout == 0 {
+		sb.Timeout = 30 * 60 // default 30 minutes
+	}
+
+	// one hour max
+	if sb.IdleTimeout > 60*60 {
+		sb.IdleTimeout = 60 * 60
+	}
+
 	// check resources is not set and set to default value
 	if sb.CPU == "" {
 		sb.CPU = DefaultCPU
@@ -176,21 +180,12 @@ func setDefaultValueOfSandbox(sb *Sandbox) {
 }
 
 func (sb *Sandbox) Make() error {
-	// one day max
-	maxTimeout := 60 * 60 * 24
-	if sb.Timeout >= maxTimeout {
-		sb.Timeout = maxTimeout
-	}
+	// remove '-'
+	id := strings.Replace(uuid.NewString(), "-", "", -1)
+	sb.ID = id
 
-	// default timeout, since int default is 0 when not set, so we set it to 30 minutes, E2B default is 300s
-	if sb.Timeout == 0 {
-		sb.Timeout = 30 * 60 // default 30 minutes
-	}
-
-	// one hour max
-	if sb.IdleTimeout > 60*60 {
-		sb.IdleTimeout = 60 * 60
-	}
+	sb.CreatedAt = time.Now()
+	sb.Status = Creating
 
 	t := &config.Template{}
 
@@ -256,10 +251,6 @@ func (sb *Sandbox) Make() error {
 		sb.MemoryLimit = t.Resources.MemoryLimit
 	}
 
-	id := uuid.NewString()
-	// remove '-'
-	id = strings.Replace(id, "-", "", -1)
-
 	if sb.Name == "" {
 		prefix := t.Name
 
@@ -272,23 +263,8 @@ func (sb *Sandbox) Make() error {
 		}
 	}
 
-	sb.SetCreationTimestamp(metav1.Now())
-	sb.CreatedAt = time.Now()
-
-	sb.ID = id
-	labels := sb.GetLabels()
-	labels[IDLabel] = id
-	labels[TPLLabel] = sb.Template
-	labels[UserLabel] = sb.User
-	labels[TimeLabel] = strconv.FormatInt(time.Now().Unix(), 10)
-
-	sb.SetName(sb.Name)
-	sb.SetLabels(labels)
-
-	sb.Status = Creating
-
 	// other default values
-	setDefaultValueOfSandbox(sb)
+	validAndRestValueOfSandbox(sb)
 
 	return nil
 }

@@ -676,7 +676,7 @@ func (a *Handler) ListPool(r *http.Request) (interface{}, error) {
 	// get all templates in rss  and count templates by name to readySize
 	templateCount := make(map[string]int)
 	for _, rs := range rss {
-		tplName := rs.Object.GetLabels()[sandbox.TPLLabel]
+		tplName := rs.Template
 		templateCount[tplName]++
 	}
 

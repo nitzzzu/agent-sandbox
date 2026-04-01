@@ -17,11 +17,10 @@
 package scaler
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/activator"
-	"github.com/agent-sandbox/agent-sandbox/pkg/sandbox"
+	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,10 +35,9 @@ func (s *Scaler) ScalingDownOfTimeout() {
 	}
 
 	for _, sb := range sbs {
-		createT := getTime(sb)
+		createT := sb.CreatedAt
 		timeout := sb.Timeout
 		if timeout == -1 {
-			klog.V(2).Infof("Sandbox %v timeout is -1, skipping scaling down", sb.Name)
 			continue
 		}
 		tt := createT.Add(time.Duration(timeout) * time.Second)
@@ -56,31 +54,13 @@ func (s *Scaler) ScalingDownOfTimeout() {
 				},
 				ObjectMeta: v1meta.ObjectMeta{
 					Name:      sb.Name,
-					Namespace: sb.GetNamespace(),
+					Namespace: config.Cfg.SandboxNamespace,
 				},
 			}
 			r.Event(obj, corev1.EventTypeNormal, "ScaleDownTimeout", "Sandbox scaled down due to timeout")
-			klog.Infof("Scaled down sandbox %s CreationTimestamp %s Timeout %v IdleTimeout %v", sb.Name, sb.GetCreationTimestamp(), sb.Timeout, sb.IdleTimeout)
+			klog.Infof("Scaled down sandbox %s CreationTimestamp %s Timeout %v IdleTimeout %v", sb.Name, sb.CreatedAt, sb.Timeout, sb.IdleTimeout)
 		}
 
 	}
 
-}
-
-func getTime(rs *sandbox.Sandbox) time.Time {
-	t := rs.GetCreationTimestamp()
-
-	// If time label exists, use it as the creation time for timeout calculation
-	// "1772003597"
-	labels := rs.GetLabels()
-	if tStr, ok := labels[sandbox.TimeLabel]; ok {
-		tInt, err := strconv.ParseInt(tStr, 10, 64)
-		if err != nil {
-			klog.Errorf("Failed to parse time label %s for rs %s, error: %v", tStr, rs.Name, err)
-			return t.Time
-		}
-		return time.Unix(tInt, 0)
-	}
-
-	return t.Time
 }

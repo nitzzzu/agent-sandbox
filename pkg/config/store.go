@@ -5,7 +5,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const TemplatesConfigMapName = "agent-sandbox"
 const TemplatesConfigMapKey = "config-templates"
 
 // SandboxTemplateConfigMapKey sandbox template is k8s Resource Definition(ReplicasSet) for sandbox

@@ -1,13 +1,28 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
-import { clearAuthToken, getAuthToken } from '../lib/auth/token'
+import { canAccessNav, clearAuthToken, getAuthToken } from '../lib/auth/token'
 import { applyTheme, getAvailableThemes, getTheme, type ThemeName } from '../lib/theme/theme'
 
 export default function AppShellLayout() {
   const navigate = useNavigate()
   const [version, setVersion] = useState('unknown')
   const [theme, setTheme] = useState<ThemeName>(getTheme())
+  const token = getAuthToken()
+
+  const canViewSandboxes = canAccessNav('sandboxes', token)
+  const canViewPool = canAccessNav('pool', token)
+  const canViewLogs = canAccessNav('logs', token)
+  const canViewTerminal = canAccessNav('terminal', token)
+  const canViewFiles = canAccessNav('files', token)
+  const canViewTemplatesConfig = canAccessNav('templatesConfig', token)
+  const canViewSandboxTemplateConfig = canAccessNav('sandboxTemplateConfig', token)
+  const canViewEvents = canAccessNav('events', token)
+
+  const hasSandboxTools = canViewLogs || canViewTerminal || canViewFiles
+  const hasSettings = canViewTemplatesConfig || canViewSandboxTemplateConfig || canViewEvents
+
+  const tokenPreview = token ? `${token.substring(0, 10)}...` : 'N/A'
 
   const handleThemeChange = (nextTheme: ThemeName) => {
     setTheme(nextTheme)
@@ -65,54 +80,70 @@ export default function AppShellLayout() {
 
             <ul className="menu w-full p-0">
                 <li></li>
-                <li>
-                    <NavLink to="/sandboxes"
-                             className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
-                        Sandboxes
-                    </NavLink>
-                </li>
-                <li>
-                    <NavLink to="/pool" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
-                        Pools
-                    </NavLink>
-                </li>
-                <li></li>
-                <li className="menu-title">Sandbox Tools</li>
-                <li>
-                    <NavLink to="/logs" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
-                        Logs
-                    </NavLink>
-                </li>
-                <li>
-                    <NavLink to="/terminal"
-                             className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
-                        Terminal
-                    </NavLink>
-                </li>
-                <li>
-                    <NavLink to="/files" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
-                        Files
-                    </NavLink>
-                </li>
-                <li></li>
-                <li className="menu-title">Settings</li>
-                <li>
-                    <NavLink to="/config/templates"
-                             className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
-                        Templates Config
-                    </NavLink>
-                </li>
-                <li>
-                    <NavLink to="/config/sandbox-template"
-                             className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
-                        Sandbox-Template Config
-                    </NavLink>
-                </li>
-                <li>
-                    <NavLink to="/events" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
-                        Events
-                    </NavLink>
-                </li>
+                {canViewSandboxes && (
+                  <li>
+                      <NavLink to="/sandboxes"
+                               className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Sandboxes
+                      </NavLink>
+                  </li>
+                )}
+                {canViewPool && (
+                  <li>
+                      <NavLink to="/pool" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Pools
+                      </NavLink>
+                  </li>
+                )}
+                {hasSandboxTools && <li></li>}
+                {hasSandboxTools && <li className="menu-title">Sandbox Tools</li>}
+                {canViewLogs && (
+                  <li>
+                      <NavLink to="/logs" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Logs
+                      </NavLink>
+                  </li>
+                )}
+                {canViewTerminal && (
+                  <li>
+                      <NavLink to="/terminal"
+                               className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Terminal
+                      </NavLink>
+                  </li>
+                )}
+                {canViewFiles && (
+                  <li>
+                      <NavLink to="/files" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Files
+                      </NavLink>
+                  </li>
+                )}
+                {hasSettings && <li></li>}
+                {hasSettings && <li className="menu-title">Settings</li>}
+                {canViewTemplatesConfig && (
+                  <li>
+                      <NavLink to="/config/templates"
+                               className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Templates Config
+                      </NavLink>
+                  </li>
+                )}
+                {canViewSandboxTemplateConfig && (
+                  <li>
+                      <NavLink to="/config/sandbox-template"
+                               className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Sandbox-Template Config
+                      </NavLink>
+                  </li>
+                )}
+                {canViewEvents && (
+                  <li>
+                      <NavLink to="/events" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Events
+                      </NavLink>
+                  </li>
+                )}
             </ul>
 
             <div className="mt-auto space-y-3">
@@ -179,7 +210,7 @@ export default function AppShellLayout() {
                 </button>
                 <div className="text-center">
                     <div className="status status-info "></div>
-                    <span className="text-xs text-base-content/70"> Token: {getAuthToken().substring(0, 10)}...</span>
+                    <span className="text-xs text-base-content/70"> Token: {tokenPreview}</span>
                 </div>
                 <div className=" text-xs text-base-content/70 text-center">
                     Agent-Sandbox Version v{version}

@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react'
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { deletePool, listPoolSandboxes } from '../lib/api/pool'
 import type { PoolSandbox, PoolTemplate } from '../lib/api/types'
+
+type PoolSandboxSortKey = 'created-desc' | 'created-asc' | 'name-asc' | 'name-desc'
+
+const refreshIntervalOptions = [2000, 5000, 10000, 30000]
 
 function formatCreatedAt(value?: string): string {
   if (!value) {
@@ -15,6 +19,19 @@ function formatCreatedAt(value?: string): string {
   }
 
   return date.toLocaleString()
+}
+
+function getCreatedTimestamp(value?: string): number {
+  if (!value) {
+    return 0
+  }
+
+  const parsed = Date.parse(value)
+  if (Number.isNaN(parsed)) {
+    return 0
+  }
+
+  return parsed
 }
 
 function decodePoolName(value?: string): string {
@@ -49,8 +66,21 @@ export default function PoolDetailPage() {
   const [poolSuccessMessage, setPoolSuccessMessage] = useState('')
   const [deletingPoolName, setDeletingPoolName] = useState<string | null>(null)
   const [confirmDeletePoolName, setConfirmDeletePoolName] = useState<string | null>(null)
+  const [isAutoRefresh, setIsAutoRefresh] = useState(true)
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(5000)
+  const [sortKey, setSortKey] = useState<PoolSandboxSortKey>('created-desc')
 
-  const loadPoolSandboxes = async (name: string, options?: { keepMessages?: boolean }) => {
+  const poolDetailRequestInFlightRef = useRef(false)
+  const deletingPoolNameRef = useRef<string | null>(null)
+
+  deletingPoolNameRef.current = deletingPoolName
+
+  const loadPoolSandboxes = useCallback(async (name: string, options?: { keepMessages?: boolean }) => {
+    if (poolDetailRequestInFlightRef.current) {
+      return
+    }
+
+    poolDetailRequestInFlightRef.current = true
     setIsPoolDetailLoading(true)
     setPoolDetailError('')
 
@@ -67,9 +97,10 @@ export default function PoolDetailPage() {
       setPoolDetailError(message)
       setPoolSandboxes([])
     } finally {
+      poolDetailRequestInFlightRef.current = false
       setIsPoolDetailLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     if (!poolName) {
@@ -87,7 +118,48 @@ export default function PoolDetailPage() {
     }
 
     void loadPoolSandboxes(poolName)
-  }, [poolName, selectedPool])
+  }, [poolName, selectedPool, loadPoolSandboxes])
+
+  useEffect(() => {
+    if (!isAutoRefresh || !poolName) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      if (deletingPoolNameRef.current) {
+        return
+      }
+      void loadPoolSandboxes(poolName, { keepMessages: true })
+    }, refreshIntervalMs)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [isAutoRefresh, refreshIntervalMs, poolName, loadPoolSandboxes])
+
+  const sortedPoolSandboxes = useMemo(() => {
+    const next = [...poolSandboxes]
+
+    next.sort((a, b) => {
+      if (sortKey === 'created-desc') {
+        return getCreatedTimestamp(b.created_at) - getCreatedTimestamp(a.created_at)
+      }
+
+      if (sortKey === 'created-asc') {
+        return getCreatedTimestamp(a.created_at) - getCreatedTimestamp(b.created_at)
+      }
+
+      const nameA = (a.name ?? '').toLocaleLowerCase()
+      const nameB = (b.name ?? '').toLocaleLowerCase()
+      if (sortKey === 'name-asc') {
+        return nameA.localeCompare(nameB)
+      }
+
+      return nameB.localeCompare(nameA)
+    })
+
+    return next
+  }, [poolSandboxes, sortKey])
 
   const handleRefreshPoolDetail = async () => {
     if (!poolName) {
@@ -126,6 +198,17 @@ export default function PoolDetailPage() {
     }
   }
 
+  const handleRefreshIntervalChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const parsed = Number.parseInt(event.target.value, 10)
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      setRefreshIntervalMs(parsed)
+    }
+  }
+
+  const handleSortChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setSortKey(event.target.value as PoolSandboxSortKey)
+  }
+
   return (
     <>
       <header className="card border border-base-300 bg-base-100 shadow-sm">
@@ -157,139 +240,171 @@ export default function PoolDetailPage() {
       <section>
         <div className="card border border-base-300 bg-base-100 shadow-sm">
           <div className="card-body gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="text-sm text-base-content/70">Pool Name</div>
-                  <div className="text-lg font-semibold">{poolName || '-'}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button className="btn btn-sm btn-ghost" type="button" onClick={() => navigate('/pool')} disabled={Boolean(deletingPoolName)}>
-                    Back to List
-                  </button>
-                  <button
-                    className={`btn btn-sm btn-outline ${isPoolDetailLoading ? 'btn-disabled' : ''}`}
-                    type="button"
-                    onClick={() => {
-                      void handleRefreshPoolDetail()
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm text-base-content/70">Pool Name</div>
+                <div className="text-lg font-semibold">{poolName || '-'}</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="label cursor-pointer gap-2 py-0">
+                  <span className="label-text text-sm">Auto Refresh</span>
+                  <input
+                    className="toggle toggle-sm"
+                    type="checkbox"
+                    checked={isAutoRefresh}
+                    onChange={() => {
+                      setIsAutoRefresh((prev) => !prev)
                     }}
-                    disabled={!poolName || isPoolDetailLoading || Boolean(deletingPoolName)}
-                  >
-                    {isPoolDetailLoading ? 'Refreshing...' : 'Refresh'}
-                  </button>
-                  <button
-                    className={`btn btn-sm btn-error ${deletingPoolName ? 'btn-disabled' : ''}`}
-                    type="button"
                     disabled={!poolName || Boolean(deletingPoolName)}
-                    onClick={() => {
-                      setConfirmDeletePoolName(poolName || null)
-                    }}
-                  >
-                    {deletingPoolName === poolName ? 'Deleting...' : 'Delete Pool'}
-                  </button>
-                </div>
-              </div>
+                  />
+                </label>
 
-              {(poolDetailError || poolMetaError) && (
-                <div className="space-y-2">
-                  {poolDetailError && (
-                    <div className="alert alert-error">
-                      <span>{poolDetailError}</span>
-                    </div>
-                  )}
-                  {poolMetaError && (
-                    <div className="alert alert-error">
-                      <span>{poolMetaError}</span>
-                    </div>
-                  )}
-                </div>
-              )}
+                <label className="flex items-center gap-2">
+                  <span className="text-sm">Interval</span>
+                  <select className="select select-sm select-bordered" value={String(refreshIntervalMs)} onChange={handleRefreshIntervalChange} disabled={!isAutoRefresh || Boolean(deletingPoolName)}>
+                    {refreshIntervalOptions.map((interval) => (
+                      <option key={interval} value={interval}>
+                        {interval / 1000}s
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-              <div className="rounded-box border border-base-300 bg-base-200/40 p-4 space-y-4">
-                <div className="mb-2 text-sm font-medium">Pool Details</div>
+                <label className="flex items-center gap-2">
+                  <span className="text-sm">Sort</span>
+                  <select className="select select-sm select-bordered" value={sortKey} onChange={handleSortChange}>
+                    <option value="created-desc">Created (newest first)</option>
+                    <option value="created-asc">Created (oldest first)</option>
+                    <option value="name-asc">Name (A-Z)</option>
+                    <option value="name-desc">Name (Z-A)</option>
+                  </select>
+                </label>
 
-                <div>
-                  <div className="text-xs text-base-content/70">Image</div>
-                  <div className="text-sm break-all">{poolTemplate?.image || '-'}</div>
-                </div>
-                  <div>
-                      <div className="text-xs text-base-content/70">Description</div>
-                      <div className="text-sm">{poolTemplate?.description || '-'}</div>
-                  </div>
-                <div>
-                  <div className="text-xs text-base-content/70">Port</div>
-                  <div className="text-sm">{typeof poolTemplate?.port === 'number' ? poolTemplate.port : '-'}</div>
-                </div>
-
-                <div className="rounded-box border border-base-300 bg-base-100/70 p-3">
-                  <div className="mb-2 text-sm font-medium">Pool Config</div>
-                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <div className="text-xs text-base-content/70">Pool Size</div>
-                      <div className="text-sm">{typeof poolTemplate?.pool?.size === 'number' ? poolTemplate.pool.size : '-'}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-base-content/70">Pool Ready Size</div>
-                      <div className="text-sm">{typeof poolTemplate?.pool?.readySize === 'number' ? poolTemplate.pool.readySize : '-'}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-base-content/70">Pool Probe Port</div>
-                      <div className="text-sm">{typeof poolTemplate?.pool?.probePort === 'number' ? poolTemplate.pool.probePort : '-'}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-base-content/70">Pool Warmup Command</div>
-                      <div className="text-sm break-all">{poolTemplate?.pool?.warmupCmd || '-'}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-base-content/70">Pool Startup Command</div>
-                      <div className="text-sm break-all">{poolTemplate?.pool?.startupCmd || '-'}</div>
-                    </div>
-                  </div>
-                </div>
-
-
-              </div>
-
-              <div className="custom-scrollbar overflow-x-auto rounded-box border border-base-300">
-                <table className="table table-zebra">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Name</th>
-                      <th>Template</th>
-                      <th>Status</th>
-                      <th>Timeout</th>
-                      <th>Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {poolSandboxes.length === 0 ? (
-                      <tr>
-                        <td className="text-center text-base-content/70" colSpan={6}>
-                          {isPoolDetailLoading ? 'Loading pool sandboxes...' : 'No sandboxes found in this pool.'}
-                        </td>
-                      </tr>
-                    ) : (
-                      poolSandboxes.map((sandbox, index) => (
-                        <tr key={sandbox.name || sandbox.id || `pool-sandbox-${index}`}>
-                          <td>{index + 1}</td>
-                          <td className="font-medium">{sandbox.name || '-'}</td>
-                          <td>{sandbox.template || '-'}</td>
-                          <td>
-                            {sandbox.status ? (
-                              <span className={`badge ${sandbox.status === 'running' ? 'badge-success' : 'badge-warning'}`}>{sandbox.status}</span>
-                            ) : (
-                              '-'
-                            )}
-                          </td>
-                          <td>{typeof sandbox.timeout === 'number' ? `${sandbox.timeout}s` : '-'}</td>
-                          <td>{formatCreatedAt(sandbox.created_at)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                <button className="btn btn-sm btn-ghost" type="button" onClick={() => navigate('/pool')} disabled={Boolean(deletingPoolName)}>
+                  Back to List
+                </button>
+                <button
+                  className={`btn btn-sm btn-outline ${isPoolDetailLoading ? 'btn-disabled' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    void handleRefreshPoolDetail()
+                  }}
+                  disabled={!poolName || isPoolDetailLoading || Boolean(deletingPoolName)}
+                >
+                  {isPoolDetailLoading ? 'Refreshing...' : 'Refresh'}
+                </button>
+                <button
+                  className={`btn btn-sm btn-error ${deletingPoolName ? 'btn-disabled' : ''}`}
+                  type="button"
+                  disabled={!poolName || Boolean(deletingPoolName)}
+                  onClick={() => {
+                    setConfirmDeletePoolName(poolName || null)
+                  }}
+                >
+                  {deletingPoolName === poolName ? 'Deleting...' : 'Delete Pool'}
+                </button>
               </div>
             </div>
+
+            {(poolDetailError || poolMetaError) && (
+              <div className="space-y-2">
+                {poolDetailError && (
+                  <div className="alert alert-error">
+                    <span>{poolDetailError}</span>
+                  </div>
+                )}
+                {poolMetaError && (
+                  <div className="alert alert-error">
+                    <span>{poolMetaError}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="rounded-box border border-base-300 bg-base-200/40 p-4 space-y-4">
+              <div className="mb-2 text-sm font-medium">Pool Details</div>
+
+              <div>
+                <div className="text-xs text-base-content/70">Image</div>
+                <div className="text-sm break-all">{poolTemplate?.image || '-'}</div>
+              </div>
+              <div>
+                <div className="text-xs text-base-content/70">Description</div>
+                <div className="text-sm">{poolTemplate?.description || '-'}</div>
+              </div>
+              <div>
+                <div className="text-xs text-base-content/70">Port</div>
+                <div className="text-sm">{typeof poolTemplate?.port === 'number' ? poolTemplate.port : '-'}</div>
+              </div>
+
+              <div className="rounded-box border border-base-300 bg-base-100/70 p-3">
+                <div className="mb-2 text-sm font-medium">Pool Config</div>
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <div className="text-xs text-base-content/70">Pool Size</div>
+                    <div className="text-sm">{typeof poolTemplate?.pool?.size === 'number' ? poolTemplate.pool.size : '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-base-content/70">Pool Ready Size</div>
+                    <div className="text-sm">{typeof poolTemplate?.pool?.readySize === 'number' ? poolTemplate.pool.readySize : '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-base-content/70">Pool Probe Port</div>
+                    <div className="text-sm">{typeof poolTemplate?.pool?.probePort === 'number' ? poolTemplate.pool.probePort : '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-base-content/70">Pool Warmup Command</div>
+                    <div className="text-sm break-all">{poolTemplate?.pool?.warmupCmd || '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-base-content/70">Pool Startup Command</div>
+                    <div className="text-sm break-all">{poolTemplate?.pool?.startupCmd || '-'}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="custom-scrollbar overflow-x-auto rounded-box border border-base-300">
+              <table className="table table-zebra">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Name</th>
+                    <th>Template</th>
+                    <th>Status</th>
+                    <th>Timeout</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedPoolSandboxes.length === 0 ? (
+                    <tr>
+                      <td className="text-center text-base-content/70" colSpan={6}>
+                        {isPoolDetailLoading ? 'Loading pool sandboxes...' : 'No sandboxes found in this pool.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedPoolSandboxes.map((sandbox, index) => (
+                      <tr key={sandbox.name || sandbox.id || `pool-sandbox-${index}`}>
+                        <td>{index + 1}</td>
+                        <td className="font-medium">{sandbox.name || '-'}</td>
+                        <td>{sandbox.template || '-'}</td>
+                        <td>
+                          {sandbox.status ? (
+                            <span className={`badge ${sandbox.status === 'running' ? 'badge-success' : 'badge-warning'}`}>{sandbox.status}</span>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td>{typeof sandbox.timeout === 'number' ? `${sandbox.timeout}s` : '-'}</td>
+                        <td>{formatCreatedAt(sandbox.created_at)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
 

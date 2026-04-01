@@ -107,7 +107,7 @@ func (ahh *ApiHttpHandler) regHandlers() {
 	ahh.mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		// return the json of status and version
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, config.Cfg.Version)
+		fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, config.Version)
 		return
 	})
 

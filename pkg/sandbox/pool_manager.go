@@ -20,35 +20,219 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	rsclient "knative.dev/pkg/client/injection/kube/informers/apps/v1/replicaset"
+	"knative.dev/pkg/reconciler"
 
 	"github.com/agent-sandbox/agent-sandbox/pkg/config"
 	v1 "k8s.io/api/apps/v1"
 	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 )
 
 // PoolManager manages sandbox pool replicasets
+type poolCandidate struct {
+	replicaset *v1.ReplicaSet
+	reserved   bool
+}
+
 type PoolManager struct {
-	client             kubernetes.Interface
-	rootCtx            context.Context
-	replenishTriggerCh chan struct{}
+	client         kubernetes.Interface
+	rootCtx        context.Context
+	replenishQueue workqueue.RateLimitingInterface
+
+	candidateLock sync.Mutex
+	// candidateByTemplate e.g. {"python": {"rs1": candidate1, "rs2": candidate2}, "nodejs": {"rs3": candidate3}}
+	candidateByTemplate map[string]map[string]*poolCandidate
 }
 
 // NewPoolManager creates a new PoolManager instance
 func NewPoolManager(ctx context.Context) *PoolManager {
 	c := kubeclient.Get(ctx)
-	return &PoolManager{
-		client:             c,
-		rootCtx:            ctx,
-		replenishTriggerCh: make(chan struct{}, 1),
+	pm := &PoolManager{
+		client:              c,
+		rootCtx:             ctx,
+		replenishQueue:      workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		candidateByTemplate: make(map[string]map[string]*poolCandidate),
+	}
+	pm.registerReplicaSetEventHandler()
+	return pm
+}
+
+func (pm *PoolManager) registerReplicaSetEventHandler() {
+	_, err := rsclient.Get(pm.rootCtx).Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+		FilterFunc: reconciler.ChainFilterFuncs(
+			reconciler.LabelFilterFunc(PoolLabel, "true", false),
+		),
+		Handler: cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj any) {
+				pm.upsertCandidateReplicaSet(obj)
+			},
+			UpdateFunc: func(_, newObj any) {
+				pm.upsertCandidateReplicaSet(newObj)
+			},
+			// also call it when PoolLabel change to false
+			DeleteFunc: func(obj any) {
+				pm.removeCandidateReplicaSet(obj)
+			},
+		},
+	})
+	if err != nil {
+		klog.Fatalf("failed to add replica set event handler: %v", err)
+	}
+}
+
+// insert or update
+func (pm *PoolManager) upsertCandidateReplicaSet(obj any) {
+	rs, ok := obj.(*v1.ReplicaSet)
+	if !ok || rs == nil {
+		return
+	}
+
+	tplName := rs.GetLabels()[TPLLabel]
+	tpl, err := config.GetTemplateByName(tplName)
+	if err != nil || tpl == nil {
+		pm.removeCandidateReplicaSet(rs)
+		return
+	}
+
+	if rs.Status.ReadyReplicas == 0 {
+		pm.removeCandidateReplicaSet(rs)
+		return
+	}
+
+	rsImg := rs.Spec.Template.Spec.Containers[0].Image
+	if rsImg != tpl.Image {
+		pm.removeCandidateReplicaSet(rs)
+		return
+	}
+
+	pm.candidateLock.Lock()
+	defer pm.candidateLock.Unlock()
+
+	if pm.candidateByTemplate[tplName] == nil {
+		pm.candidateByTemplate[tplName] = make(map[string]*poolCandidate)
+	}
+	candidate := pm.candidateByTemplate[tplName][rs.Name]
+	if candidate == nil {
+		candidate = &poolCandidate{}
+		pm.candidateByTemplate[tplName][rs.Name] = candidate
+	}
+	candidate.replicaset = rs.DeepCopy()
+	candidate.reserved = false
+
+	// for logs
+	candidateNames := make([]string, 0, len(pm.candidateByTemplate[tplName]))
+	for name, item := range pm.candidateByTemplate[tplName] {
+		if item == nil {
+			continue
+		}
+		if item.reserved {
+			candidateNames = append(candidateNames, fmt.Sprintf("%s(reserved)", name))
+			continue
+		}
+		candidateNames = append(candidateNames, name)
+	}
+	klog.V(1).Infof("pool candidates template=%s count=%d items=[%s]", tplName, len(candidateNames), strings.Join(candidateNames, ", "))
+}
+
+func (pm *PoolManager) removeCandidateReplicaSet(obj any) {
+	var rs *v1.ReplicaSet
+	switch t := obj.(type) {
+	case *v1.ReplicaSet:
+		rs = t
+	case cache.DeletedFinalStateUnknown:
+		deletedRS, ok := t.Obj.(*v1.ReplicaSet)
+		if !ok {
+			return
+		}
+		rs = deletedRS
+	default:
+		return
+	}
+	if rs == nil {
+		return
+	}
+
+	tplName := rs.GetLabels()[TPLLabel]
+
+	pm.candidateLock.Lock()
+	defer pm.candidateLock.Unlock()
+
+	if tplName == "" {
+		return
+	}
+
+	if templateCandidates, exists := pm.candidateByTemplate[tplName]; exists {
+		delete(templateCandidates, rs.Name)
+	}
+
+}
+
+func (pm *PoolManager) reserveCandidateForTemplate(templateName string) *v1.ReplicaSet {
+	pm.candidateLock.Lock()
+	defer pm.candidateLock.Unlock()
+
+	templateCandidates, ok := pm.candidateByTemplate[templateName]
+	if !ok || len(templateCandidates) == 0 {
+		return nil
+	}
+
+	var selected *poolCandidate
+	for _, candidate := range templateCandidates {
+		if candidate == nil || candidate.replicaset == nil {
+			continue
+		}
+		if candidate.reserved {
+			continue
+		}
+		if selected == nil || candidate.replicaset.CreationTimestamp.Before(&selected.replicaset.CreationTimestamp) {
+			selected = candidate
+		}
+	}
+
+	if selected == nil {
+		return nil
+	}
+
+	selected.reserved = true
+	return selected.replicaset.DeepCopy()
+}
+
+func (pm *PoolManager) removeCandidateByName(templateName, name string) {
+	if templateName == "" || name == "" {
+		return
+	}
+
+	pm.candidateLock.Lock()
+	defer pm.candidateLock.Unlock()
+
+	if templateCandidates, exists := pm.candidateByTemplate[templateName]; exists {
+		delete(templateCandidates, name)
+	}
+}
+
+func (pm *PoolManager) releaseReservedPool(templateName, name string) {
+	if templateName == "" || name == "" {
+		return
+	}
+
+	pm.candidateLock.Lock()
+	defer pm.candidateLock.Unlock()
+
+	if templateCandidates, exists := pm.candidateByTemplate[templateName]; exists {
+		if candidate, ok := templateCandidates[name]; ok && candidate != nil {
+			candidate.reserved = false
+		}
 	}
 }
 
@@ -56,97 +240,50 @@ func NewPoolManager(ctx context.Context) *PoolManager {
 // It marks the pool replicaset as in-use and updates its metadata with actual sandbox data
 // Returns error if concurrent update conflict occurs (optimistic locking)
 func (pm *PoolManager) AcquirePoolReplicaSet(sb *Sandbox) (*v1.ReplicaSet, bool, error) {
-	// Try to find an available pool replicaset
-	available, err := pm.listAvailablePoolReplicaSets(sb.TemplateObj)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to list available pool replicasets  %v", err)
-	}
-
-	// If none available, create and return
-	if len(available) == 0 {
-		var createdRS *v1.ReplicaSet
-		//  create, if pool size is 0
-		createdRS, err = pm.createReplicaSet(sb)
-		if err != nil || createdRS == nil {
-			return nil, false, fmt.Errorf("failed to create available pool replicasets %v", err)
+	for {
+		poolRS := pm.reserveCandidateForTemplate(sb.TemplateObj.Name)
+		if poolRS == nil {
+			createdRS, err := pm.createReplicaSet(sb)
+			if err != nil || createdRS == nil {
+				return nil, false, err
+			}
+			return createdRS, false, nil
 		}
-		return createdRS, false, nil
-	}
 
-	// available pool replicasets exist, random select one
-	// and adapt pool instance to sandbox instance
-	var poolRS *v1.ReplicaSet
-	//random select one available pool replicaset
-	idx := time.Now().UnixNano() % int64(len(available))
-	poolRS = available[idx]
-	klog.Infof("Acquired available pool replicasets count %v, select %s", len(available), poolRS.Name)
-
-	acquiredRS, err := pm.adaptReplicasetToSandbox(poolRS, sb)
-	if err != nil {
-		klog.Warningf("failed to acquire pool replicaset %s: %v", poolRS.Name, err)
-		return nil, false, fmt.Errorf("failed to acquire any pool replicaset: %v", err)
-	}
-
-	pm.enqueueReplenishTrigger("acquire-from-pool")
-	return acquiredRS, true, nil
-}
-
-// ListAvailablePoolReplicaSets lists available pool replicasets for a given template
-func (pm *PoolManager) listAvailablePoolReplicaSets(template *config.Template) ([]*v1.ReplicaSet, error) {
-	// Build selector: sbx-pool=true, sbx-pool-in-use=false, sbx-template=<template>
-	selector := labels.Set{
-		PoolLabel: "true",
-		TPLLabel:  template.Name,
-	}.AsSelector()
-
-	rsList, err := rsclient.Get(pm.rootCtx).Lister().List(selector)
-
-	//TODO retry with times
-	if err != nil {
-		klog.Errorf("failed to list pool replicasets for template %s: %v", template, err)
-		return nil, err
-	}
-
-	result := []*v1.ReplicaSet{}
-	for i := range rsList {
-		rs := rsList[i]
-		rsImg := rs.Spec.Template.Spec.Containers[0].Image
-
-		// check image is same as template, in case some pool replicaset is created with old template image when template is updated
-		// if not same, delete it and skip
-		//TODO check rs pods is ready?
-		if rsImg != template.Image {
-			klog.Warningf("deleting pool replicaset %s with outdated image %s for template %s", rs.Name, rsImg, template.Name)
-			err := pm.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Delete(context.TODO(), rs.Name, v1meta.DeleteOptions{})
-			if err != nil {
-				klog.Errorf("failed to delete pool replicaset %s with outdated image %s for template %s: %v", rs.Name, rsImg, template.Name, err)
+		acquiredRS, err := pm.adaptReplicasetToSandbox(poolRS, sb)
+		if err != nil {
+			klog.Warningf("failed to adapt pool replicaset=%s: error=%v", poolRS.Name, err)
+			if errors.IsConflict(err) {
+				pm.removeCandidateByName(sb.TemplateObj.Name, poolRS.Name)
+			} else {
+				// for other errors, just release the reservation and let it be retried in the next loop, no need to remove from candidate map since it might be a transient error and the replicaset is still valid
+				pm.releaseReservedPool(sb.TemplateObj.Name, poolRS.Name)
 			}
 			continue
 		}
-		result = append(result, rs)
-	}
 
-	klog.V(2).Infof("found %d available pool replicasets for template %s", len(result), template)
-	return result, nil
+		pm.replenishQueue.AddAfter("replenish", 1*time.Second)
+		return acquiredRS, true, nil
+	}
 }
 
 func (pm *PoolManager) adaptReplicasetToSandbox(rs *v1.ReplicaSet, sb *Sandbox) (*v1.ReplicaSet, error) {
 	// Create a deep copy for update
 	rsCopy := rs.DeepCopy()
 
-	sbLabels := sb.GetLabels()
 	rsLabels := rsCopy.GetLabels()
+
+	// for fallback if update failed
+	originalID := sb.ID
+	originalName := sb.Name
 
 	// Retain the pool replicaset ID as sandbox ID
 	sb.ID = rsLabels[IDLabel]
 	sb.Name = rsCopy.Name
-	sbLabels[IDLabel] = rsLabels[IDLabel]
-	sb.SetLabels(sbLabels)
 
 	// Reset as in-use and update labels
 	rsLabels[UserLabel] = sb.User
 	rsLabels[PoolLabel] = "false"
-	rsLabels[TimeLabel] = strconv.FormatInt(time.Now().Unix(), 10)
 	rsCopy.SetLabels(rsLabels)
 
 	// Reset annotations with actual sandbox data
@@ -162,7 +299,10 @@ func (pm *PoolManager) adaptReplicasetToSandbox(rs *v1.ReplicaSet, sb *Sandbox) 
 	_, err := pm.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Update(context.TODO(), rsCopy, v1meta.UpdateOptions{})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to update pool replicaset %s: %v", rs.Name, err)
+		sb.ID = originalID
+		sb.Name = originalName
+		klog.Error("failed to update pool replicaset error=", err, ", sandbox=", sb)
+		return nil, err
 	}
 
 	klog.V(2).Infof("adapted pool replicaset %s for sandbox %s", rs.Name, sb.Name)
@@ -172,13 +312,12 @@ func (pm *PoolManager) adaptReplicasetToSandbox(rs *v1.ReplicaSet, sb *Sandbox) 
 // createReplicaSet creates a specified number of pool replicasets for a template
 // force indicates whether to create at least one replicaset when not existing ones before list return empty
 func (pm *PoolManager) createReplicaSet(sb *Sandbox) (*v1.ReplicaSet, error) {
-	klog.Infof("creating pool replicasets for sandbox %v", sb)
+	klog.Infof("creating replicasets for sandbox %v", sb)
 
 	var createdRS *v1.ReplicaSet
 
 	var err error
 	if createdRS, err = pm.createSingleReplicaSet(sb); err != nil {
-		klog.Errorf("failed to create pool replicaset for sandbox %+v: %v", sb, err)
 		return nil, err
 	}
 
@@ -190,7 +329,7 @@ func (pm *PoolManager) createSingleReplicaSet(sb *Sandbox) (*v1.ReplicaSet, erro
 	// Create a pool sandbox with same configuration as user request
 	rs, err := buildReplicaSet(sb)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build replicaset from sandbox %v error %v", sb, err)
+		return nil, fmt.Errorf("failed to build replicaset error %v", err)
 	}
 
 	lbs := rs.GetLabels()
@@ -211,35 +350,34 @@ func (pm *PoolManager) createSingleReplicaSet(sb *Sandbox) (*v1.ReplicaSet, erro
 	return createdRS, nil
 }
 
-func (pm *PoolManager) enqueueReplenishTrigger(reason string) {
-	select {
-	case <-pm.rootCtx.Done():
-		klog.V(2).Infof("skip replenish trigger enqueue (%s): pool manager stopping", reason)
-		return
-	default:
-	}
-
-	select {
-	case pm.replenishTriggerCh <- struct{}{}:
-		klog.V(2).Infof("enqueued replenish trigger (%s)", reason)
-	default:
-		klog.V(2).Infof("replenish trigger already pending, coalesced (%s)", reason)
-	}
-}
-
 func (pm *PoolManager) StartPoolSyncing() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				pm.replenishQueue.Add("replenish")
+			case <-pm.rootCtx.Done():
+				pm.replenishQueue.ShutDown()
+				return
+			}
+		}
+	}()
+
 	for {
-		select {
-		case <-ticker.C:
-			pm.replenishPoolAsync()
-		case <-pm.replenishTriggerCh:
-			pm.replenishPoolAsync()
-		case <-pm.rootCtx.Done():
+		item, shutdown := pm.replenishQueue.Get()
+		if shutdown {
 			klog.Info("Scaler stopping")
 			return
 		}
+
+		func() {
+			defer pm.replenishQueue.Done(item)
+			pm.replenishPoolAsync()
+			pm.replenishQueue.Forget(item)
+		}()
 	}
 }
 
@@ -276,6 +414,7 @@ func (pm *PoolManager) replenishPoolAsync() {
 		for i := 0; i < count; i++ {
 			sb := GetDefaultSandbox()
 			sb.Template = tpl.Name
+			sb.User = config.SystemToken
 			sb.IsPool = true
 			if tpl.Pool.WarmupCmd != "" {
 				// "tail, -f /dev/null"
@@ -285,7 +424,6 @@ func (pm *PoolManager) replenishPoolAsync() {
 					sb.Args = strings.Split(cmds[1], " ")
 				}
 			}
-			sb.User = "sys-2492a85b10ed4cb083b2c76b181eac96"
 
 			// init name and valid fields
 			if err := sb.Make(); err != nil {
@@ -302,4 +440,42 @@ func (pm *PoolManager) replenishPoolAsync() {
 		}
 
 	}
+}
+
+// ListAvailablePoolReplicaSets lists available pool replicasets for a given template
+func (pm *PoolManager) listAvailablePoolReplicaSets(template *config.Template) ([]*v1.ReplicaSet, error) {
+	// Build selector: sbx-pool=true, sbx-pool-in-use=false, sbx-template=<template>
+	selector := labels.Set{
+		PoolLabel: "true",
+		TPLLabel:  template.Name,
+	}.AsSelector()
+
+	rsList, err := rsclient.Get(pm.rootCtx).Lister().List(selector)
+
+	if err != nil {
+		klog.Errorf("failed to list pool replicasets for template %s: %v", template.Name, err)
+		return nil, err
+	}
+
+	result := []*v1.ReplicaSet{}
+	for i := range rsList {
+		rs := rsList[i]
+		rsImg := rs.Spec.Template.Spec.Containers[0].Image
+
+		// check image is same as template, in case some pool replicaset is created with old template image when template is updated
+		// if not same, delete it and skip
+		if rsImg != template.Image {
+			klog.Warningf("deleting pool replicaset %s with outdated image %s for template %s", rs.Name, rsImg, template.Name)
+			err := pm.client.AppsV1().ReplicaSets(config.Cfg.SandboxNamespace).Delete(context.TODO(), rs.Name, v1meta.DeleteOptions{})
+			if err != nil {
+				klog.Errorf("failed to delete pool replicaset %s with outdated image %s for template %s: %v", rs.Name, rsImg, template.Name, err)
+			}
+			continue
+		}
+
+		result = append(result, rs)
+	}
+
+	klog.V(2).Infof("found %d available pool replicasets for template %s", len(result), template.Name)
+	return result, nil
 }

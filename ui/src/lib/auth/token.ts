@@ -1,5 +1,25 @@
 const TOKEN_STORAGE_KEY = 'api-token'
 
+export type NavKey =
+  | 'sandboxes'
+  | 'pool'
+  | 'logs'
+  | 'terminal'
+  | 'files'
+  | 'templatesConfig'
+  | 'sandboxTemplateConfig'
+  | 'events'
+
+const DEFAULT_ALLOWED_NAVS: NavKey[] = ['sandboxes', 'pool', 'logs', 'terminal', 'files', 'events']
+
+export function canAccessNav(key: NavKey, token = getAuthToken()): boolean {
+  if (token.startsWith('sys-')) {
+    return true
+  }
+
+  return DEFAULT_ALLOWED_NAVS.includes(key)
+}
+
 export function getAuthToken(): string {
   try {
     return (localStorage.getItem(TOKEN_STORAGE_KEY) || '').trim()
