@@ -10,8 +10,6 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container: pandoc/latex
     steps:
       - uses: actions/checkout@v2
       - name: Pushes to another repository
