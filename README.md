@@ -15,7 +15,7 @@ Shell commands etc. with stateful, long-running, multi-session and multi-tenant.
 
 <div align="center">
 <h3>Agent-Sandbox UI</h3> 
-<div>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal access Tools for Sandbox etc. <br><br/> UI path is <a href="https://agent-sandbox.domain.com/ui">https://agent-sandbox.domain.com/ui</a>.   
+<div>including Sandbox Management, Pool Management, Template Management and Files, Logs, Terminal, Traffic Monitor access Tools for Sandbox etc. <br><br/> UI path is <a href="https://agent-sandbox.domain.com/ui">https://agent-sandbox.domain.com/ui</a>.   
 <br/>
   Default UI admin login token:  <b>sys-2492a85b10ed4cb083b2c76b181eac96</b>,  config user tokens by env variable <b>API_TOKENS_RAW</b> e.g. user1-2492a85b10ed4cb083b2c76b181eac00,user2-2492a85b10ed4cb083b2c76b181eac01 . 
 </div>
@@ -103,6 +103,7 @@ flowchart TD
 - **Enterprise-Grade** - Support multiple Sandbox lifecycle manage for each tenant or session, allowing Agents to run different tasks simultaneously without interference for different tenant or session.
 - **Cloud-Native** - Leverages Kubernetes built to run in cloud environments, leveraging the benefits of cloud infrastructure such as scalability, flexibility, resilience and efficient resource management.
 - **Fast and Lightweight** - Designed to be lightweight and fast, minimizing Kubernetes's objects to deploy. easy to use and maintain.
+- **Traffic Monitor** - Live HTTP/HTTPS traffic inspection per sandbox via a mitmproxy sidecar, streamed in real-time to the UI.
 
 # Quick Start
 
@@ -301,6 +302,186 @@ print(response.text)
 }
 ```
 
+
+# Traffic Monitor
+
+Agent-Sandbox includes a live HTTP/HTTPS traffic inspector that shows every request a sandbox makes, in real time.
+
+## How it works
+
+When a sandbox is started with `metadata.mitm=true`, two extra containers are injected into its pod:
+
+1. **`mitm-init`** (init container) — sets `iptables` rules that redirect outbound port 80/443 traffic to the mitmproxy sidecar.
+2. **`mitmproxy`** sidecar — runs `mitmdump` in transparent mode on port 8877, emitting JSON lines to stdout via a Python addon.
+
+The backend streams those JSON lines from the pod logs over a WebSocket (`GET /api/v1/traffic/sandbox/{name}/ws`). The UI Traffic page connects to that socket and renders a live table of flows.
+
+## One-time cluster setup
+
+Apply the addon ConfigMap once per cluster (same namespace as your sandboxes):
+
+```bash
+kubectl apply -n agent-sandbox -f - <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-sandbox-mitm-addon
+  namespace: agent-sandbox
+data:
+  logger.py: |
+    import json, time
+    from mitmproxy import http
+
+    class TrafficLogger:
+        def response(self, flow: http.HTTPFlow) -> None:
+            entry = {
+                "type": "flow",
+                "timestamp": flow.request.timestamp_start,
+                "method":    flow.request.method,
+                "url":       flow.request.pretty_url,
+                "host":      flow.request.pretty_host,
+                "path":      flow.request.path,
+                "status":    flow.response.status_code,
+                "req_size":  len(flow.request.content or b""),
+                "res_size":  len(flow.response.content or b""),
+                "content_type": flow.response.headers.get("content-type", ""),
+                "duration_ms": round(
+                    (flow.response.timestamp_end - flow.request.timestamp_start) * 1000
+                ),
+            }
+            print(json.dumps(entry), flush=True)
+
+        def error(self, flow: http.HTTPFlow) -> None:
+            entry = {
+                "type":      "error",
+                "timestamp": time.time(),
+                "url":       flow.request.pretty_url if flow.request else "",
+                "message":   str(flow.error),
+            }
+            print(json.dumps(entry), flush=True)
+
+    addons = [TrafficLogger()]
+EOF
+```
+
+## Enable traffic monitoring for a sandbox
+
+Pass `mitm=true` in the sandbox metadata at creation time:
+
+```shell
+curl -X POST /api/v1/sandbox \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"my-sandbox","metadata":{"mitm":"true"}}'
+```
+
+Then open **Traffic** in the sidebar of the UI and select the sandbox. All outbound HTTP/HTTPS requests will appear as a live, color-coded table (green = 2xx, yellow = 3xx, orange = 4xx, red = 5xx).
+
+## HTTPS decryption
+
+mitmproxy acts as a transparent TLS terminator. Without extra configuration, HTTPS flows appear in the traffic table as `CONNECT` tunnel entries — you can see the destination host and timing, but not the request path, headers, or body. To see the full decrypted content, pick one of the two approaches below. They can be used together.
+
+### Approach 1 — Install the mitmproxy CA into the container image
+
+mitmproxy generates a self-signed CA certificate on first start and writes it to `/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem` inside the sidecar container. Once the sandbox container trusts that CA, mitmproxy can terminate TLS and show decrypted flows.
+
+**Option A: extract the cert at sandbox start via `startupCmd`**
+
+Use the sandbox template's `startupCmd` to copy the cert from the sidecar's shared process namespace and register it before your workload starts. This works for any Debian/Ubuntu-based image:
+
+```json
+{
+  "name": "my-sandbox",
+  "metadata": { "mitm": "true" },
+  "startupCmd": "until [ -f /proc/$(pgrep mitmdump)/root/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem ]; do sleep 0.2; done; cp /proc/$(pgrep mitmdump)/root/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt && update-ca-certificates"
+}
+```
+
+For Alpine-based images replace the last part with:
+```sh
+cp ... /usr/local/share/ca-certificates/mitmproxy.crt && update-ca-certificates
+# Alpine:
+cp ... /usr/local/share/ca-certificates/mitmproxy.crt && update-ca-certificates
+# or:
+cat ... >> /etc/ssl/certs/ca-certificates.crt
+```
+
+**Option B: bake the cert into a custom image**
+
+If you control the image build, extract the CA cert from a running mitmproxy container once and `COPY` it in:
+
+```bash
+# 1. Extract the cert from a throwaway mitmproxy container
+docker run --rm -d --name tmp-mitm mitmproxy/mitmproxy:10 mitmdump
+sleep 2
+docker cp tmp-mitm:/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem ./mitmproxy-ca-cert.pem
+docker rm -f tmp-mitm
+```
+
+```dockerfile
+# 2. Add it to your Dockerfile (Debian/Ubuntu example)
+COPY mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
+RUN update-ca-certificates
+```
+
+> **Note:** mitmproxy regenerates its CA on each fresh start unless the `.mitmproxy` directory is persisted. For a stable cert across pod restarts, mount a PersistentVolume or a Secret at `/home/mitmproxy/.mitmproxy` containing a pre-generated `mitmproxy-ca.pem` and `mitmproxy-ca-cert.pem`.
+
+---
+
+### Approach 2 — `SSLKEYLOGFILE` (no CA trust required)
+
+Processes that use OpenSSL, BoringSSL, or NSS (Python, Node.js, curl, Chrome, Firefox, etc.) can write their TLS session keys to a file when the `SSLKEYLOGFILE` environment variable is set. mitmproxy picks up this file and uses the keys to decrypt traffic without needing to be a trusted CA.
+
+Pass the variable when creating the sandbox:
+
+```shell
+curl -X POST /api/v1/sandbox \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "my-sandbox",
+    "metadata": { "mitm": "true" },
+    "envVars": { "SSLKEYLOGFILE": "/tmp/ssl.log" }
+  }'
+```
+
+mitmproxy automatically detects and reads `/tmp/ssl.log` from the sandbox container's filesystem (both containers share a pod network and, if needed, an `emptyDir` volume can be added for the log path).
+
+**When to use each approach**
+
+| | CA install | `SSLKEYLOGFILE` |
+|---|---|---|
+| Works with custom images you own | ✅ | ✅ |
+| Works with unmodified third-party images | ✅ (via `startupCmd`) | ✅ |
+| Decrypts traffic from Go / Rust (which don't use OpenSSL) | ✅ | ❌ |
+| Requires image rebuild | Only for Option B | ❌ |
+| Shows full request/response body | ✅ | ✅ |
+
+Either way, `CONNECT` tunnel entries are still visible even without decryption — they show the destination host, port, and connection timing, which is often enough to understand what a sandbox is talking to.
+
+## WebSocket API
+
+```
+GET /api/v1/traffic/sandbox/{name}/ws?api_key=<token>
+```
+
+Each frame is a JSON object matching the `TrafficFlow` type:
+
+```json
+{
+  "type": "flow",
+  "timestamp": 1712000000.123,
+  "method": "GET",
+  "url": "https://api.example.com/data",
+  "status": 200,
+  "req_size": 0,
+  "res_size": 1234,
+  "content_type": "application/json",
+  "duration_ms": 84
+}
+```
+
+Returns `400` if the sandbox was not started with `mitm=true`.
+
+---
 
 # License
 

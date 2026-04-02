@@ -31,6 +31,22 @@ spec:
 {{ if index .Sandbox.Metadata "runtimeClassName" }}
       runtimeClassName: {{.Sandbox.Metadata.runtimeClassName}}
 {{ end }}
+{{- if index .Sandbox.Metadata "mitm" }}
+      initContainers:
+        - name: mitm-init
+          image: alpine:3.19
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          command:
+            - sh
+            - -c
+            - |
+              apk add --no-cache iptables
+              iptables -t nat -A OUTPUT -p tcp --dport 80  -m owner ! --uid-owner 1000 -j REDIRECT --to-port 8877
+              iptables -t nat -A OUTPUT -p tcp --dport 443 -m owner ! --uid-owner 1000 -j REDIRECT --to-port 8877
+              echo "iptables rules set"
+{{- end }}
       containers:
         - name: sandbox
           image: {{.Sandbox.Image}}
@@ -73,3 +89,26 @@ spec:
             successThreshold: 1
             timeoutSeconds: 3
   {{end}}
+{{- if index .Sandbox.Metadata "mitm" }}
+        - name: mitmproxy
+          image: mitmproxy/mitmproxy:10
+          securityContext:
+            runAsUser: 1000
+          command:
+            - mitmdump
+            - --mode
+            - transparent
+            - --listen-port
+            - "8877"
+            - --set
+            - ssl_insecure=true
+            - -s
+            - /addon/logger.py
+          volumeMounts:
+            - name: mitm-addon
+              mountPath: /addon
+      volumes:
+        - name: mitm-addon
+          configMap:
+            name: agent-sandbox-mitm-addon
+{{- end }}

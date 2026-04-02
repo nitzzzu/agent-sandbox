@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -547,6 +548,58 @@ func (a *Handler) StreamSandboxTerminalWS(w http.ResponseWriter, r *http.Request
 			}
 		case <-ctx.Done():
 			return
+		}
+	}
+}
+
+// StreamSandboxTrafficWS streams mitmproxy JSON log lines from the mitmproxy
+// sidecar container as WebSocket messages.
+// Route: GET /api/v1/traffic/sandbox/{name}/ws
+func (a *Handler) StreamSandboxTrafficWS(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		Err(w, "sandbox name is required")
+		return
+	}
+
+	sb, err := a.controller.Get(name)
+	if err != nil || sb == nil {
+		w.WriteHeader(http.StatusNotFound)
+		Err(w, fmt.Sprintf("sandbox %s not found", name))
+		return
+	}
+
+	if sb.Metadata["mitm"] != "true" {
+		w.WriteHeader(http.StatusBadRequest)
+		Err(w, "sandbox was not started with mitm=true metadata")
+		return
+	}
+
+	conn, err := terminalWSUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		klog.Errorf("failed to upgrade websocket for sandbox %s traffic: %v", name, err)
+		return
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	stream, err := a.controller.StreamContainerLogs(ctx, name, "mitmproxy")
+	if err != nil {
+		_ = conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
+		return
+	}
+	defer stream.Close()
+
+	scanner := bufio.NewScanner(stream)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) > 0 && line[0] == '{' {
+			if err := conn.WriteMessage(websocket.TextMessage, line); err != nil {
+				return
+			}
 		}
 	}
 }

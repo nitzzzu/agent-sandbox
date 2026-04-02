@@ -192,3 +192,20 @@ export type SandboxEventsData = {
   items: SandboxEventItem[]
   fetchedAt: string
 }
+
+export type TrafficFlow = {
+  type: 'flow' | 'error'
+  timestamp: number
+  method?: string
+  url: string
+  host?: string
+  path?: string
+  status?: number
+  req_size?: number
+  res_size?: number
+  content_type?: string
+  duration_ms?: number
+  message?: string
+}
+
+export type TrafficWSServerMessage = TrafficFlow

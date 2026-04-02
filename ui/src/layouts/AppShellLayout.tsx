@@ -15,11 +15,12 @@ export default function AppShellLayout() {
   const canViewLogs = canAccessNav('logs', token)
   const canViewTerminal = canAccessNav('terminal', token)
   const canViewFiles = canAccessNav('files', token)
+  const canViewTraffic = canAccessNav('traffic', token)
   const canViewTemplatesConfig = canAccessNav('templatesConfig', token)
   const canViewSandboxTemplateConfig = canAccessNav('sandboxTemplateConfig', token)
   const canViewEvents = canAccessNav('events', token)
 
-  const hasSandboxTools = canViewLogs || canViewTerminal || canViewFiles
+  const hasSandboxTools = canViewLogs || canViewTerminal || canViewFiles || canViewTraffic
   const hasSettings = canViewTemplatesConfig || canViewSandboxTemplateConfig || canViewEvents
 
   const tokenPreview = token ? `${token.substring(0, 10)}...` : 'N/A'
@@ -116,6 +117,13 @@ export default function AppShellLayout() {
                   <li>
                       <NavLink to="/files" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
                           Files
+                      </NavLink>
+                  </li>
+                )}
+                {canViewTraffic && (
+                  <li>
+                      <NavLink to="/traffic" className={({isActive}) => (isActive ? 'menu-active text-left' : 'text-left')}>
+                          Traffic
                       </NavLink>
                   </li>
                 )}

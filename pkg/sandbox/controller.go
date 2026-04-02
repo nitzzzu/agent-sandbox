@@ -701,6 +701,28 @@ func (s *Controller) GetSandboxLogs(name string, tailLines int64) (*SandboxLogsR
 	}, nil
 }
 
+func (s *Controller) StreamContainerLogs(ctx context.Context, sandboxName, container string) (io.ReadCloser, error) {
+	pods := s.GetInstances(sandboxName)
+	if len(pods) == 0 {
+		return nil, fmt.Errorf("sandbox %s has no pods", sandboxName)
+	}
+
+	selected := pods[0]
+	for _, pod := range pods {
+		if pod.Status.Phase == v1core.PodRunning {
+			selected = pod
+			break
+		}
+	}
+
+	options := &v1core.PodLogOptions{
+		Container: container,
+		Follow:    true,
+	}
+
+	return s.kclient.CoreV1().Pods(config.Cfg.SandboxNamespace).GetLogs(selected.Name, options).Stream(ctx)
+}
+
 func (s *Controller) ExecuteSandboxTerminal(name string, command []string) (*SandboxTerminalResult, error) {
 	if len(command) == 0 {
 		return nil, fmt.Errorf("command is required")

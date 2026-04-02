@@ -77,6 +77,7 @@ func (ahh *ApiHttpHandler) regHandlers() {
 
 	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/terminal/sandbox/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ExecuteSandboxTerminal) })
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/terminal/sandbox/{name}/ws", config.Cfg.APIBaseURL), sbHeader.StreamSandboxTerminalWS)
+	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/traffic/sandbox/{name}/ws", config.Cfg.APIBaseURL), sbHeader.StreamSandboxTrafficWS)
 
 	ahh.mux.HandleFunc(fmt.Sprintf("GET %s/sandbox/files/{name}", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.ListSandboxFiles) })
 	ahh.mux.HandleFunc(fmt.Sprintf("POST %s/sandbox/files/{name}/upload", config.Cfg.APIBaseURL), func(w http.ResponseWriter, r *http.Request) { wrapperHandler(w, r, sbHeader.UploadSandboxFile) })
