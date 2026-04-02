@@ -34,7 +34,7 @@ spec:
 {{- if index .Sandbox.Metadata "mitm" }}
       initContainers:
         - name: mitm-init
-          image: alpine:3.19
+          image: alpine:3.23
           securityContext:
             capabilities:
               add: ["NET_ADMIN"]
@@ -91,7 +91,7 @@ spec:
   {{end}}
 {{- if index .Sandbox.Metadata "mitm" }}
         - name: mitmproxy
-          image: mitmproxy/mitmproxy:10
+          image: mitmproxy/mitmproxy:12
           securityContext:
             runAsUser: 1000
           command:
