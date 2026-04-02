@@ -13,19 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     container: pandoc/latex
     steps:
-      - uses: actions/checkout@v2
-      - name: Install mustache (to update the date)
-        run:  apk add ruby && gem install mustache
+      - uses: actions/checkout@v4
       - name: Pushes to another repository
         id: push_directory
-        uses: cpina/github-action-push-to-another-repository@target-branch
+        uses: cpina/github-action-push-to-another-repository@main
         env:
           API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
         with:
-          source-directory: .
-          destination-github-username: 'cpina'
-          destination-repository-name: 'push-to-another-repository-output'
-          user-email: carles3@pina.cat
+          source-directory: 'web'
+          destination-github-username: 'agent-sandbox'
+          destination-repository-name: 'agent-sandbox.github.io'
+          user-email: grf110@163.com
           commit-message: See ORIGIN_COMMIT from $GITHUB_REF
           target-branch: main
       - name: Test get variable exported by push-to-another-repository
