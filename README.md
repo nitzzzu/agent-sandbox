@@ -332,6 +332,13 @@ data:
     import json, time
     from mitmproxy import http
 
+    MAX_BODY = 10240  # 10 KB cap per body
+
+    def _decode(data: bytes) -> str:
+        if not data:
+            return ""
+        return data[:MAX_BODY].decode("utf-8", errors="replace")
+
     class TrafficLogger:
         def response(self, flow: http.HTTPFlow) -> None:
             entry = {
@@ -344,6 +351,8 @@ data:
                 "status":    flow.response.status_code,
                 "req_size":  len(flow.request.content or b""),
                 "res_size":  len(flow.response.content or b""),
+                "req_body":  _decode(flow.request.content),
+                "res_body":  _decode(flow.response.content),
                 "content_type": flow.response.headers.get("content-type", ""),
                 "duration_ms": round(
                     (flow.response.timestamp_end - flow.request.timestamp_start) * 1000

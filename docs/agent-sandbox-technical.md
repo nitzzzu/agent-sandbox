@@ -489,6 +489,8 @@ Each line is a JSON object flushed immediately to stdout so `kubectl logs --foll
 | `status` | int | HTTP response status code |
 | `req_size` | int | Request body size in bytes |
 | `res_size` | int | Response body size in bytes |
+| `req_body` | string | Request body content (UTF-8, capped at 10 KB) |
+| `res_body` | string | Response body content (UTF-8, capped at 10 KB) |
 | `content_type` | string | `Content-Type` response header |
 | `duration_ms` | int | Round-trip time in milliseconds |
 | `message` | string | Error description (only for `type=error`) |

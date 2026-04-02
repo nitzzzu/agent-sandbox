@@ -203,6 +203,8 @@ export type TrafficFlow = {
   status?: number
   req_size?: number
   res_size?: number
+  req_body?: string
+  res_body?: string
   content_type?: string
   duration_ms?: number
   message?: string
