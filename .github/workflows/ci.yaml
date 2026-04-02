@@ -8,25 +8,24 @@ on:
   pull_request:
     branches: [ main ]
 
-defaults:
-  run:
-    shell: bash
-    
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: pandoc/latex
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
+      - name: Install mustache (to update the date)
+        run:  apk add ruby && gem install mustache
       - name: Pushes to another repository
         id: push_directory
-        uses: cpina/github-action-push-to-another-repository@main
+        uses: cpina/github-action-push-to-another-repository@target-branch
         env:
           API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
         with:
-          source-directory: 'web'
-          destination-github-username: 'agent-sandbox'
-          destination-repository-name: 'agent-sandbox.github.io'
-          user-email: grf110@163.com
+          source-directory: .
+          destination-github-username: 'cpina'
+          destination-repository-name: 'push-to-another-repository-output'
+          user-email: carles3@pina.cat
           commit-message: See ORIGIN_COMMIT from $GITHUB_REF
           target-branch: main
       - name: Test get variable exported by push-to-another-repository
