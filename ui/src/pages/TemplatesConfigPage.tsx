@@ -263,6 +263,8 @@ export default function TemplatesConfigPage() {
   const [templatesSaveError, setTemplatesSaveError] = useState('')
   const [templatesSaveSuccess, setTemplatesSaveSuccess] = useState('')
   const [metadataDraft, setMetadataDraft] = useState('')
+  const [envVarsDraft, setEnvVarsDraft] = useState('')
+  const [argsDraft, setArgsDraft] = useState('')
 
   const loadTemplates = async (options?: { keepMessages?: boolean }) => {
     setIsTemplatesLoading(true)
@@ -283,6 +285,8 @@ export default function TemplatesConfigPage() {
         setRawTemplatesText('[]')
         setSelectedTemplateIndex(null)
         setMetadataDraft('')
+        setEnvVarsDraft('')
+        setArgsDraft('')
         return
       }
 
@@ -303,10 +307,14 @@ export default function TemplatesConfigPage() {
       setSelectedTemplateIndex((prev) => {
         if (nextTemplates.length === 0) {
           setMetadataDraft('')
+          setEnvVarsDraft('')
+          setArgsDraft('')
           return null
         }
         const nextIndex = prev === null || prev >= nextTemplates.length ? 0 : prev
         setMetadataDraft(metadataToText(nextTemplates[nextIndex]?.metadata))
+        setEnvVarsDraft(metadataToText(nextTemplates[nextIndex]?.envVars))
+        setArgsDraft((nextTemplates[nextIndex]?.args ?? []).join('\n'))
         return nextIndex
       })
     } catch (error) {
@@ -320,6 +328,8 @@ export default function TemplatesConfigPage() {
       setRawTemplatesText('[]')
       setSelectedTemplateIndex(null)
       setMetadataDraft('')
+      setEnvVarsDraft('')
+      setArgsDraft('')
     } finally {
       setIsTemplatesLoading(false)
     }
@@ -341,6 +351,8 @@ export default function TemplatesConfigPage() {
   const handleSelectTemplate = (index: number) => {
     setSelectedTemplateIndex(index)
     setMetadataDraft(metadataToText(templates[index]?.metadata))
+    setEnvVarsDraft(metadataToText(templates[index]?.envVars))
+    setArgsDraft((templates[index]?.args ?? []).join('\n'))
     setTemplatesParseError('')
     clearSaveMessages()
   }
@@ -376,6 +388,8 @@ export default function TemplatesConfigPage() {
       setTemplates(nextTemplates)
       setSelectedTemplateIndex(nextTemplates.length === 0 ? null : 0)
       setMetadataDraft(nextTemplates.length === 0 ? '' : metadataToText(nextTemplates[0]?.metadata))
+      setEnvVarsDraft(nextTemplates.length === 0 ? '' : metadataToText(nextTemplates[0]?.envVars))
+      setArgsDraft(nextTemplates.length === 0 ? '' : (nextTemplates[0]?.args ?? []).join('\n'))
       setTemplatesParseError('')
       clearSaveMessages()
       setEditorMode('form')
@@ -586,10 +600,34 @@ export default function TemplatesConfigPage() {
                           </div>
                           <textarea
                             className="textarea textarea-sm textarea-bordered w-full font-mono text-xs"
-                            value={(selectedTemplate.args ?? []).join('\n')}
+                            value={argsDraft}
                             onChange={(event) => {
-                              const args = event.target.value.split('\n').map((s) => s.trim()).filter(Boolean)
+                              const value = event.target.value
+                              setArgsDraft(value)
+                              const args = value.split('\n').map((s) => s.trim()).filter(Boolean)
                               updateSelectedTemplate((prev) => ({ ...prev, args: args.length > 0 ? args : undefined }))
+                            }}
+                          />
+                        </label>
+
+                        <label className="form-control w-full md:col-span-2">
+                          <div className="label">
+                            <span className="label-text">Env Vars (key=value, one per line)</span>
+                          </div>
+                          <textarea
+                            className="textarea textarea-sm textarea-bordered w-full font-mono text-xs"
+                            value={envVarsDraft}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              setEnvVarsDraft(value)
+                              try {
+                                const envVars = metadataTextToObject(value)
+                                updateSelectedTemplate((prev) => ({ ...prev, envVars }))
+                                setTemplatesParseError('')
+                              } catch (error) {
+                                const message = error instanceof Error ? error.message : 'Invalid env vars format.'
+                                setTemplatesParseError(message)
+                              }
                             }}
                           />
                         </label>

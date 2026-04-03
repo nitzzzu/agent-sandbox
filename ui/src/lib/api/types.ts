@@ -53,6 +53,7 @@ export type Template = {
   metadata?: Record<string, string>
   noStartupProbe?: boolean
   args?: string[]
+  envVars?: Record<string, string>
   resources?: TemplateResources
   pool?: TemplatePool
   description?: string

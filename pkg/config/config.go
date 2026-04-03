@@ -61,6 +61,7 @@ type Template struct {
 	Metadata       map[string]string `json:"metadata" required:"false"`
 	NoStartupProbe bool              `json:"noStartupProbe" required:"false"`
 	Args           []string          `json:"args" required:"false"`
+	EnvVars        map[string]string `json:"envVars" required:"false"`
 	Resources      Resources         `json:"resources"  required:"false"`
 	Pool           TemplatePool      `json:"pool" required:"false"`
 	Description    string            `json:"description" required:"false"`
