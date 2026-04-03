@@ -340,6 +340,9 @@ func GetTemplateByName(name string) (*Template, error) {
 				Type:           t.Type,
 				NoStartupProbe: t.NoStartupProbe,
 				Description:    t.Description,
+				Metadata:       t.Metadata,
+				Args:           t.Args,
+				EnvVars:        t.EnvVars,
 			}
 			return dynT, nil
 		}

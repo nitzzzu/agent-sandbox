@@ -168,6 +168,8 @@ function toSaveTemplatesPayload(templates: EditableTemplate[]): Template[] {
       type: template.type?.trim() || undefined,
       pattern: template.pattern?.trim() || undefined,
       metadata: parseMetadata(template.metadata),
+      args: Array.isArray(template.args) && template.args.length > 0 ? template.args : undefined,
+      envVars: parseMetadata(template.envVars),
       noStartupProbe: Boolean(template.noStartupProbe),
       port: parseOptionalInteger(template.port, `Template #${index + 1} port`),
       resources: parseResources(template.resources),

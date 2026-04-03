@@ -117,7 +117,7 @@ spec:
   {{if .Sandbox.EnvVars}}
       {{range $name, $value := .Sandbox.EnvVars }}
             - name: {{$name}}
-              value: {{printf "%q" $value}}
+              value: {{$value}}
       {{end }}
   {{end}}
           resources:

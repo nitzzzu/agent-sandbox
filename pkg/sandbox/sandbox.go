@@ -228,6 +228,18 @@ func (sb *Sandbox) Make() error {
 		sb.Args = t.Args
 	}
 
+	// merge template envVars into sandbox envVars, sandbox envVars have higher priority
+	if t.EnvVars != nil {
+		if sb.EnvVars == nil {
+			sb.EnvVars = map[string]string{}
+		}
+		for k, v := range t.EnvVars {
+			if _, ok := sb.EnvVars[k]; !ok {
+				sb.EnvVars[k] = v
+			}
+		}
+	}
+
 	// merge template metadata and sandbox metadata, sandbox metadata has higher priority
 	if t.Metadata != nil {
 		for k, v := range t.Metadata {
