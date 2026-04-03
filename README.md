@@ -353,6 +353,8 @@ data:
                 "res_size":  len(flow.response.content or b""),
                 "req_body":  _decode(flow.request.content),
                 "res_body":  _decode(flow.response.content),
+                "req_headers": dict(flow.request.headers),
+                "res_headers": dict(flow.response.headers),
                 "content_type": flow.response.headers.get("content-type", ""),
                 "duration_ms": round(
                     (flow.response.timestamp_end - flow.request.timestamp_start) * 1000

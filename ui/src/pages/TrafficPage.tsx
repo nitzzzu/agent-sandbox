@@ -50,6 +50,23 @@ function tryFormatJSON(str?: string): { text: string; isJson: boolean } {
   }
 }
 
+function HeadersSection({ label, headers }: { label: string; headers?: Record<string, string> }) {
+  if (!headers || Object.keys(headers).length === 0) return null
+  return (
+    <div>
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/50">{label}</div>
+      <div className="overflow-auto rounded bg-base-300 p-2 text-xs" style={{ maxHeight: '180px' }}>
+        {Object.entries(headers).map(([k, v]) => (
+          <div key={k} className="flex gap-2 py-0.5">
+            <span className="shrink-0 font-mono text-primary/80">{k}:</span>
+            <span className="break-all font-mono text-base-content/80">{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function BodySection({ label, body, contentType }: { label: string; body?: string; contentType?: string }) {
   if (!body) return null
   const isJsonType = contentType?.includes('json') ?? false
@@ -126,12 +143,14 @@ function FlowDetail({ flow, onClose }: { flow: TrafficFlow; onClose: () => void 
           </div>
         )}
 
+        <HeadersSection label="Request headers" headers={flow.req_headers} />
         <BodySection label="Request body" body={flow.req_body} />
+        <HeadersSection label="Response headers" headers={flow.res_headers} />
         <BodySection label="Response body" body={flow.res_body} contentType={flow.content_type} />
 
-        {!flow.req_body && !flow.res_body && flow.type !== 'error' && (
+        {!flow.req_body && !flow.res_body && !flow.req_headers && !flow.res_headers && flow.type !== 'error' && (
           <p className="text-xs text-base-content/40">
-            No body captured. Update your <code>logger.py</code> ConfigMap to include <code>req_body</code> / <code>res_body</code>.
+            No body or headers captured. Update your <code>logger.py</code> ConfigMap to include <code>req_headers</code> / <code>res_headers</code>.
           </p>
         )}
       </div>

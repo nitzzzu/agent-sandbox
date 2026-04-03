@@ -205,6 +205,8 @@ export type TrafficFlow = {
   res_size?: number
   req_body?: string
   res_body?: string
+  req_headers?: Record<string, string>
+  res_headers?: Record<string, string>
   content_type?: string
   duration_ms?: number
   message?: string
