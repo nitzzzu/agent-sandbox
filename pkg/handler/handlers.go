@@ -440,10 +440,16 @@ func (a *Handler) StreamSandboxTerminalWS(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if _, err := a.controller.Get(name); err != nil {
+	sb, err := a.controller.Get(name)
+	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		Err(w, fmt.Sprintf("sandbox %s not found", name))
 		return
+	}
+
+	shellCmd := defaultInteractiveShellCommand()
+	if sb.TemplateObj != nil && sb.TemplateObj.Shell != "" {
+		shellCmd = []string{sb.TemplateObj.Shell}
 	}
 
 	conn, err := terminalWSUpgrader.Upgrade(w, r, nil)
@@ -476,7 +482,7 @@ func (a *Handler) StreamSandboxTerminalWS(w http.ResponseWriter, r *http.Request
 	writer := &terminalWSStreamWriter{send: send}
 
 	go func() {
-		err := a.controller.StreamSandboxTerminal(ctx, name, defaultInteractiveShellCommand(), reader, writer, resizeCh, func(session *sandbox.SandboxTerminalSession) {
+		err := a.controller.StreamSandboxTerminal(ctx, name, shellCmd, reader, writer, resizeCh, func(session *sandbox.SandboxTerminalSession) {
 			if sendErr := send(SandboxTerminalWSMessage{Type: "ready", Data: fmt.Sprintf("connected to %s/%s", session.Pod, session.Container)}); sendErr != nil {
 				klog.Warningf("failed to send ready message for sandbox %s: %v", name, sendErr)
 				cancel()
@@ -626,6 +632,20 @@ func (a *Handler) ExecuteSandboxTerminal(r *http.Request) (interface{}, error) {
 	}
 
 	return result, nil
+}
+
+func (a *Handler) DetectSandboxShell(r *http.Request) (interface{}, error) {
+	name := r.PathValue("name")
+	if name == "" {
+		return nil, fmt.Errorf("sandbox name is required")
+	}
+
+	shell, err := a.controller.DetectShell(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]string{"shell": shell}, nil
 }
 
 // ------------------------------------------------------

@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
 import { listSandboxes } from '../lib/api/sandbox'
-import { createSandboxTerminalSession } from '../lib/api/terminal'
+import { createSandboxTerminalSession, detectSandboxShell } from '../lib/api/terminal'
 import type {
   Sandbox,
   SandboxTerminalWSServerMessage,
@@ -40,6 +40,8 @@ export default function TerminalPage() {
   const [sandboxesError, setSandboxesError] = useState('')
   const [terminalError, setTerminalError] = useState('')
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>('disconnected')
+  const [detectedShell, setDetectedShell] = useState('')
+  const [isDetectingShell, setIsDetectingShell] = useState(false)
 
   const selectedSandboxNameRef = useRef('')
   selectedSandboxNameRef.current = selectedSandboxName
@@ -257,10 +259,25 @@ export default function TerminalPage() {
     connectTerminal(selectedSandboxName)
   }, [connectTerminal, disconnectTerminal, selectedSandboxName])
 
+  const handleDetectShell = async () => {
+    if (!selectedSandboxName) return
+    setIsDetectingShell(true)
+    setDetectedShell('')
+    try {
+      const shell = await detectSandboxShell(selectedSandboxName)
+      setDetectedShell(shell)
+    } catch (error) {
+      setDetectedShell(error instanceof Error ? error.message : 'Detection failed')
+    } finally {
+      setIsDetectingShell(false)
+    }
+  }
+
   const handleSandboxChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const next = event.target.value
     setSelectedSandboxName(next)
     setTerminalError('')
+    setDetectedShell('')
 
     const nextParams = new URLSearchParams(searchParams)
     if (next) {
@@ -321,6 +338,16 @@ export default function TerminalPage() {
             <button className="btn btn-sm btn-outline" type="button" onClick={disconnectTerminal} disabled={connectionState === 'disconnected'}>
               Disconnect
             </button>
+
+            <button className="btn btn-sm btn-outline" type="button" onClick={() => void handleDetectShell()} disabled={!selectedSandboxName || isDetectingShell}>
+              {isDetectingShell ? 'Detecting...' : 'Detect Shell'}
+            </button>
+
+            {detectedShell && (
+              <span className="font-mono text-xs bg-base-200 px-2 py-1 rounded">
+                shell: <strong>{detectedShell}</strong>
+              </span>
+            )}
 
             <span
               className={`badge badge-sm ${

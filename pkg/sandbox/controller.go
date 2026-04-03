@@ -819,3 +819,24 @@ func (s *Controller) SandboxMetrics(names []string) (data map[string]SandboxMetr
 func (s *Controller) ExecCommandInPod(name string, cmd []string) (output string, outputErr string, err error) {
 	return utils.ExecCommand(s.kclient, s.kcfg, config.Cfg.SandboxNamespace, name, "sandbox", cmd)
 }
+
+var candidateShells = []string{
+	"sh", "bash", "/bin/sh", "/bin/bash", "/usr/bin/sh", "/usr/bin/bash", "/busybox/sh",
+}
+
+func (s *Controller) DetectShell(name string) (string, error) {
+	selected, err := s.selectSandboxPod(name)
+	if err != nil {
+		return "", err
+	}
+
+	for _, shell := range candidateShells {
+		cmd := []string{shell, "-c", "echo ok"}
+		out, _, execErr := utils.ExecCommand(s.kclient, s.kcfg, config.Cfg.SandboxNamespace, selected.Name, "sandbox", cmd)
+		if execErr == nil && strings.TrimSpace(out) == "ok" {
+			return shell, nil
+		}
+	}
+
+	return "", fmt.Errorf("no usable shell found in container")
+}

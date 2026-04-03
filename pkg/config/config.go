@@ -62,6 +62,7 @@ type Template struct {
 	NoStartupProbe bool              `json:"noStartupProbe" required:"false"`
 	Args           []string          `json:"args" required:"false"`
 	EnvVars        map[string]string `json:"envVars" required:"false"`
+	Shell          string            `json:"shell" required:"false"`
 	Resources      Resources         `json:"resources"  required:"false"`
 	Pool           TemplatePool      `json:"pool" required:"false"`
 	Description    string            `json:"description" required:"false"`
@@ -343,6 +344,7 @@ func GetTemplateByName(name string) (*Template, error) {
 				Metadata:       t.Metadata,
 				Args:           t.Args,
 				EnvVars:        t.EnvVars,
+				Shell:          t.Shell,
 			}
 			return dynT, nil
 		}

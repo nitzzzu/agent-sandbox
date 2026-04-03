@@ -170,6 +170,7 @@ function toSaveTemplatesPayload(templates: EditableTemplate[]): Template[] {
       metadata: parseMetadata(template.metadata),
       args: Array.isArray(template.args) && template.args.length > 0 ? template.args : undefined,
       envVars: parseMetadata(template.envVars),
+      shell: template.shell?.trim() || undefined,
       noStartupProbe: Boolean(template.noStartupProbe),
       port: parseOptionalInteger(template.port, `Template #${index + 1} port`),
       resources: parseResources(template.resources),
@@ -610,6 +611,13 @@ export default function TemplatesConfigPage() {
                               updateSelectedTemplate((prev) => ({ ...prev, args: args.length > 0 ? args : undefined }))
                             }}
                           />
+                        </label>
+
+                        <label className="form-control w-full md:col-span-2">
+                          <div className="label">
+                            <span className="label-text">Shell (terminal shell path, e.g. /bin/bash, default: sh)</span>
+                          </div>
+                          <input className="input input-sm input-bordered w-full font-mono" type="text" value={selectedTemplate.shell ?? ''} onChange={(event) => updateSelectedTemplate((prev) => ({ ...prev, shell: event.target.value || undefined }))} />
                         </label>
 
                         <label className="form-control w-full md:col-span-2">
