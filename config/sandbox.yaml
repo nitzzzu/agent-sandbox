@@ -141,6 +141,10 @@ spec:
             - name: mitm-data
               mountPath: /mitm-ca
               readOnly: true
+            - name: mitm-data
+              mountPath: /etc/ssl/certs/mitmproxy-ca-cert.pem
+              subPath: mitmproxy-ca-cert.pem
+              readOnly: true
     {{end}}
   {{end}}
 {{- if index .Sandbox.Metadata "mitm" }}

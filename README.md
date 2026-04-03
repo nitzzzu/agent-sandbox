@@ -309,12 +309,12 @@ Agent-Sandbox includes a live HTTP/HTTPS traffic inspector that shows every requ
 
 ## How it works
 
-When a sandbox is started with `metadata.mitm=true`, two extra containers are injected into its pod:
+When a sandbox is started with `metadata.mitm=true`, one init container and one sidecar are injected into its pod:
 
-1. **`mitm-init`** (init container) — sets `iptables` rules that redirect outbound port 80/443 traffic to the mitmproxy sidecar.
-2. **`mitmproxy`** sidecar — runs `mitmdump` in transparent mode on port 8877, emitting JSON lines to stdout via a Python addon.
+1. **`mitm-cert-gen`** (init container) — generates a mitmproxy CA certificate into a shared `emptyDir` volume, creates a combined CA bundle (system CAs + mitmproxy CA), and writes a Python `sitecustomize.py` that patches `certifi` to trust the mitmproxy CA. The volume is then mounted read-only into the sandbox container at `/mitm-ca`.
+2. **`mitmproxy`** sidecar — installs `iptables` and redirects all outbound TCP traffic on ports 80 and 443 (from any UID other than its own) to `mitmdump` running in transparent mode on port 8877, using a Python addon (`logger.py`) to emit JSON log lines to stdout.
 
-The backend streams those JSON lines from the pod logs over a WebSocket (`GET /api/v1/traffic/sandbox/{name}/ws`). The UI Traffic page connects to that socket and renders a live table of flows.
+The backend tails those JSON lines from the pod logs and streams them over a WebSocket (`GET /api/v1/traffic/sandbox/{name}/ws`). The UI Traffic page connects to that socket and renders a live, color-coded table of flows.
 
 ## One-time cluster setup
 
@@ -361,11 +361,14 @@ data:
             print(json.dumps(entry), flush=True)
 
         def error(self, flow: http.HTTPFlow) -> None:
+            msg = str(flow.error)
+            if "Client disconnected" in msg:
+                return  # suppress noisy TCP disconnect events
             entry = {
                 "type":      "error",
                 "timestamp": time.time(),
                 "url":       flow.request.pretty_url if flow.request else "",
-                "message":   str(flow.error),
+                "message":   msg,
             }
             print(json.dumps(entry), flush=True)
 
@@ -387,84 +390,25 @@ Then open **Traffic** in the sidebar of the UI and select the sandbox. All outbo
 
 ## HTTPS decryption
 
-mitmproxy acts as a transparent TLS terminator. Without extra configuration, HTTPS flows appear in the traffic table as `CONNECT` tunnel entries — you can see the destination host and timing, but not the request path, headers, or body. To see the full decrypted content, pick one of the two approaches below. They can be used together.
+**Python and Node.js HTTPS is decrypted automatically.** When `mitm=true` is set, the sandbox template injects the following into the sandbox container at startup:
 
-### Approach 1 — Install the mitmproxy CA into the container image
+| Mechanism | Covers |
+|---|---|
+| `REQUESTS_CA_BUNDLE=/mitm-ca/combined-ca.pem` | Python `requests`, `httpx`, etc. |
+| `SSL_CERT_FILE=/mitm-ca/combined-ca.pem` | OpenSSL-linked tools (`curl`, etc.) |
+| `NODE_EXTRA_CA_CERTS=/mitm-ca/mitmproxy-ca-cert.pem` | Node.js TLS |
+| `NPM_CONFIG_CAFILE=/mitm-ca/combined-ca.pem` | npm |
+| `PYTHONPATH=/mitm-ca` (`sitecustomize.py`) | Python `certifi`-based libraries |
+| `/mitm-ca/bin` prepended to `PATH` | `node`/`npm`/`npx` wrapper scripts |
+| `/etc/ssl/certs/mitmproxy-ca-cert.pem` (subPath mount) | Go (`crypto/tls` reads all `.pem` files in that directory) |
 
-mitmproxy generates a self-signed CA certificate on first start and writes it to `/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem` inside the sidecar container. Once the sandbox container trusts that CA, mitmproxy can terminate TLS and show decrypted flows.
+No extra configuration is needed for these runtimes — full request/response bodies appear automatically in the traffic table.
 
-**Option A: extract the cert at sandbox start via `startupCmd`**
+### Other languages (Go, Rust, Java, …)
 
-Use the sandbox template's `startupCmd` to copy the cert from the sidecar's shared process namespace and register it before your workload starts. This works for any Debian/Ubuntu-based image:
+Languages that read from the OS trust store do not pick up the env vars above. However, Go's `crypto/tls` reads every `.pem` file in `/etc/ssl/certs/` — not just the bundle file. The sandbox template mounts the mitmproxy CA cert directly into that directory via a Kubernetes `subPath` volume mount, so **Go is also covered automatically** with no extra steps.
 
-```json
-{
-  "name": "my-sandbox",
-  "metadata": { "mitm": "true" },
-  "startupCmd": "until [ -f /proc/$(pgrep mitmdump)/root/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem ]; do sleep 0.2; done; cp /proc/$(pgrep mitmdump)/root/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt && update-ca-certificates"
-}
-```
-
-For Alpine-based images replace the last part with:
-```sh
-cp ... /usr/local/share/ca-certificates/mitmproxy.crt && update-ca-certificates
-# Alpine:
-cp ... /usr/local/share/ca-certificates/mitmproxy.crt && update-ca-certificates
-# or:
-cat ... >> /etc/ssl/certs/ca-certificates.crt
-```
-
-**Option B: bake the cert into a custom image**
-
-If you control the image build, extract the CA cert from a running mitmproxy container once and `COPY` it in:
-
-```bash
-# 1. Extract the cert from a throwaway mitmproxy container
-docker run --rm -d --name tmp-mitm mitmproxy/mitmproxy:10 mitmdump
-sleep 2
-docker cp tmp-mitm:/home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem ./mitmproxy-ca-cert.pem
-docker rm -f tmp-mitm
-```
-
-```dockerfile
-# 2. Add it to your Dockerfile (Debian/Ubuntu example)
-COPY mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
-RUN update-ca-certificates
-```
-
-> **Note:** mitmproxy regenerates its CA on each fresh start unless the `.mitmproxy` directory is persisted. For a stable cert across pod restarts, mount a PersistentVolume or a Secret at `/home/mitmproxy/.mitmproxy` containing a pre-generated `mitmproxy-ca.pem` and `mitmproxy-ca-cert.pem`.
-
----
-
-### Approach 2 — `SSLKEYLOGFILE` (no CA trust required)
-
-Processes that use OpenSSL, BoringSSL, or NSS (Python, Node.js, curl, Chrome, Firefox, etc.) can write their TLS session keys to a file when the `SSLKEYLOGFILE` environment variable is set. mitmproxy picks up this file and uses the keys to decrypt traffic without needing to be a trusted CA.
-
-Pass the variable when creating the sandbox:
-
-```shell
-curl -X POST /api/v1/sandbox \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "my-sandbox",
-    "metadata": { "mitm": "true" },
-    "envVars": { "SSLKEYLOGFILE": "/tmp/ssl.log" }
-  }'
-```
-
-mitmproxy automatically detects and reads `/tmp/ssl.log` from the sandbox container's filesystem (both containers share a pod network and, if needed, an `emptyDir` volume can be added for the log path).
-
-**When to use each approach**
-
-| | CA install | `SSLKEYLOGFILE` |
-|---|---|---|
-| Works with custom images you own | ✅ | ✅ |
-| Works with unmodified third-party images | ✅ (via `startupCmd`) | ✅ |
-| Decrypts traffic from Go / Rust (which don't use OpenSSL) | ✅ | ❌ |
-| Requires image rebuild | Only for Option B | ❌ |
-| Shows full request/response body | ✅ | ✅ |
-
-Either way, `CONNECT` tunnel entries are still visible even without decryption — they show the destination host, port, and connection timing, which is often enough to understand what a sandbox is talking to.
+For Rust (`rustls`) and Java, which use their own bundled CA stores and don't read the system directory, HTTPS flows still appear in the traffic table as `CONNECT` tunnel entries — destination host and timing are visible, but not the decrypted content. To fix those you would need to add the CA to the runtime's own trust store in your image.
 
 ## WebSocket API
 
@@ -472,23 +416,25 @@ Either way, `CONNECT` tunnel entries are still visible even without decryption �
 GET /api/v1/traffic/sandbox/{name}/ws?api_key=<token>
 ```
 
-Each frame is a JSON object matching the `TrafficFlow` type:
+Each frame is a JSON object:
 
 ```json
 {
   "type": "flow",
   "timestamp": 1712000000.123,
-  "method": "GET",
+  "method": "POST",
   "url": "https://api.example.com/data",
   "status": 200,
-  "req_size": 0,
+  "req_size": 512,
   "res_size": 1234,
+  "req_body": "{\"key\":\"value\"}",
+  "res_body": "{\"result\":\"ok\"}",
   "content_type": "application/json",
   "duration_ms": 84
 }
 ```
 
-Returns `400` if the sandbox was not started with `mitm=true`.
+Error frames have `"type": "error"` with a `"message"` field. Returns HTTP `400` if the sandbox was not started with `mitm=true`.
 
 ---
 
